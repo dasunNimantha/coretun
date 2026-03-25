@@ -29,23 +29,33 @@ When enabled, all LAN traffic is routed through a VLESS, VMess, Shadowsocks, or 
 
 ## Installation
 
-Copy the plugin files to your OPNsense firewall:
+SSH into your OPNsense firewall and run:
 
 ```bash
-# From the plugin directory
-(cd src && find * -type f) | while read FILE; do
-  cp --parents "src/$FILE" /usr/local/
-done
+fetch -o - https://raw.githubusercontent.com/dasunNimantha/os-xproxy/main/install.sh | sh
+```
 
-# Restart configd
+Then navigate to **VPN > Xproxy** in the web UI to configure.
+
+### Manual installation
+
+```bash
+# Clone and copy files
+cd /tmp
+fetch -o os-xproxy.tar.gz https://github.com/dasunNimantha/os-xproxy/archive/refs/heads/main.tar.gz
+tar xzf os-xproxy.tar.gz
+cd os-xproxy-main/src
+find . -type f | while read FILE; do
+  mkdir -p "$(dirname /usr/local/$FILE)"
+  cp "$FILE" "/usr/local/$FILE"
+done
 service configd restart
 ```
 
-Or build and install as a package:
+### Uninstall
 
 ```bash
-make package
-pkg add work/pkg/*.pkg
+fetch -o - https://raw.githubusercontent.com/dasunNimantha/os-xproxy/main/uninstall.sh | sh
 ```
 
 ## UI
