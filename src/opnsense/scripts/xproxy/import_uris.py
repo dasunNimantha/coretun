@@ -42,7 +42,10 @@ def parse_vless(uri):
         host, port = hostport, '443'
 
     params = parse_qs(query)
-    p = lambda k, d='': params.get(k, [d])[0]
+
+    def p(k, d=''):
+        return params.get(k, [d])[0]
+
     flow_raw = p('flow', '')
 
     return {
@@ -180,7 +183,9 @@ def parse_trojan(uri):
         host, port = hostport, '443'
 
     params = parse_qs(query)
-    p = lambda k, d='': params.get(k, [d])[0]
+
+    def p(k, d=''):
+        return params.get(k, [d])[0]
 
     security = p('security', 'tls')
     if security not in ('tls', 'reality', 'none'):
