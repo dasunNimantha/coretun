@@ -174,8 +174,12 @@ def build_xray_config(cfg, server):
                 "outboundTag": "direct"
             })
 
+    # Do NOT enable Xray "access" logging to this file: with transparent LAN
+    # routing every TCP flow writes a line — gigabit / busy LANs can generate
+    # millions of sync writes, saturating disk I/O and freezing the firewall.
+    # Errors only go to LOG_FILE; use UI log tab for diagnostics.
     config = {
-        "log": {"loglevel": log_level, "access": LOG_FILE},
+        "log": {"loglevel": log_level, "error": LOG_FILE},
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {

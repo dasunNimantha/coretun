@@ -167,6 +167,8 @@ class TestBuildXrayConfig(unittest.TestCase):
         self.assertIn('outbounds', config)
         self.assertIn('routing', config)
         self.assertEqual(config['log']['loglevel'], 'warning')
+        self.assertIn('error', config['log'])
+        self.assertNotIn('access', config['log'])
 
     def test_inbounds(self):
         cfg = _base_cfg()

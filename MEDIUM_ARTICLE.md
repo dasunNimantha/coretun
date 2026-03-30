@@ -79,13 +79,7 @@ That's it. Every device on your LAN is now routing through the tunnel. You can v
 
 ### 4. Monitor
 
-The **Log** tab shows a live view of Xray-core's connection log. You'll see entries like:
-
-```
-from tcp:127.0.0.1:51065 accepted tcp:54.83.255.51:443 [socks-in >> proxy]
-```
-
-This confirms traffic is flowing through the tunnel. DNS queries to your local resolver show as `[socks-in -> direct]`, meaning they bypass the tunnel as expected.
+The **Log** tab tails `/var/log/xproxy.log`, which receives **Xray-core error output** and plugin messages — not a per-connection access log. (Logging every LAN flow to disk would overwhelm I/O on a busy network.) Use your external IP or a test site to confirm the tunnel; check this log when something fails.
 
 ## What Happens When You Stop the Service
 
@@ -142,11 +136,42 @@ The plugin skips WAN interfaces, virtual interfaces, and the xproxytun interface
 
 **Fingerprint options:** Chrome, Firefox, Safari, Edge, randomized
 
+## Memory Considerations
+
+Traditional OPNsense routing happens entirely in the kernel — `pf` forwards packets between interfaces without any userspace memory overhead. Gigabit transfers on a 2GB VM? No problem.
+
+Xproxy changes this. Every TCP connection from your LAN now flows through **two userspace Go programs**:
+
+1. **tun2socks** reconstructs a full TCP/IP stack in memory (via gVisor) for every connection — SYN/ACK handshakes, retransmits, congestion windows, the works.
+2. **Xray-core** maintains a proxy session with TLS/Reality encryption state for each connection.
+
+With 50–100+ concurrent connections (browsers alone maintain dozens), this adds meaningful memory on top of OPNsense's baseline. On a 2GB VM, this can lead to out-of-memory pressure during traffic spikes.
+
+**Mitigations built into the plugin:**
+
+- **TCP buffer limits** — tun2socks is launched with `-tcp-rcvbuf 32k -tcp-sndbuf 32k`, reducing per-connection buffer memory by ~80% compared to defaults (which allow up to 1MB per direction per connection).
+- **Go runtime memory controls** — Both processes run with `GOGC=50` (more aggressive garbage collection) and `GOMEMLIMIT=128MiB` (soft cap on Go heap size).
+- **UDP session timeout** — Set to 30 seconds to reclaim idle UDP state quickly.
+
+**Recommendation:** If you're running OPNsense on a VM with 2GB RAM, add swap space (1GB is plenty). This gives the kernel a safety valve during traffic spikes instead of killing processes. Without swap, FreeBSD's OOM killer will terminate services when memory is tight — and on a firewall, that means loss of connectivity.
+
+```bash
+# Add 1GB swap file (persistent across reboots)
+dd if=/dev/zero of=/usr/swap0 bs=1m count=1024
+chmod 0600 /usr/swap0
+mdconfig -a -t vnode -f /usr/swap0 -u 0
+swapon /dev/md0
+echo 'md0 none swap sw,file=/usr/swap0,late 0 0' >> /etc/fstab
+```
+
+On VMs with 4GB+ RAM, this is unlikely to be an issue.
+
 ## Known Limitations
 
 - **IPv4 only** — The transparent routing rules apply to IPv4 traffic. IPv6 is not redirected through the tunnel.
 - **UDP over tunnel** — UDP works through the SOCKS5 proxy (Xray-core supports UDP), but performance depends on your proxy server and protocol.
 - **Single active server** — Only one server profile can be active at a time. You can switch between profiles from the General tab.
+- **Userspace overhead** — Unlike kernel-level `tproxy` (used by tools like v2rayA on OpenWrt), Xproxy processes all traffic in userspace via tun2socks. This adds CPU and memory overhead compared to pure kernel forwarding. See the Memory Considerations section above.
 
 ## Source Code
 

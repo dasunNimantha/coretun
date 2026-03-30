@@ -85,6 +85,22 @@ function xproxy_policy_route_enabled()
     if ($ret !== 0) {
         return false;
     }
+    /* tun2socks must be alive when installed: route-to tun9 is useless otherwise. */
+    $tunBin = '/usr/local/bin/tun2socks';
+    if (is_file($tunBin)) {
+        $tunPidFile = '/var/run/xproxy_tun2socks.pid';
+        if (!file_exists($tunPidFile)) {
+            return false;
+        }
+        $tunPid = (int)trim(@file_get_contents($tunPidFile));
+        if ($tunPid <= 0) {
+            return false;
+        }
+        exec('/bin/kill -0 ' . escapeshellarg((string)$tunPid) . ' 2>/dev/null', $tunOut, $tunRet);
+        if ($tunRet !== 0) {
+            return false;
+        }
+    }
     foreach ($mdl->servers->server->iterateItems() as $uuid => $srv) {
         if ($uuid === $active) {
             return true;
