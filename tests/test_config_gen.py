@@ -163,12 +163,14 @@ class TestBuildXrayConfig(unittest.TestCase):
         config = build_xray_config(cfg, srv)
 
         self.assertIn('log', config)
+        self.assertIn('dns', config)
         self.assertIn('inbounds', config)
         self.assertIn('outbounds', config)
         self.assertIn('routing', config)
         self.assertEqual(config['log']['loglevel'], 'warning')
         self.assertIn('error', config['log'])
         self.assertNotIn('access', config['log'])
+        self.assertEqual(config['routing']['domainStrategy'], 'AsIs')
 
     def test_inbounds(self):
         cfg = _base_cfg()
@@ -227,6 +229,173 @@ class TestBuildXrayConfig(unittest.TestCase):
         http = config['inbounds'][1]
         self.assertEqual(socks['listen'], '0.0.0.0')
         self.assertEqual(http['listen'], '0.0.0.0')
+
+    def test_dns_section_domain_server(self):
+        cfg = _base_cfg()
+        srv = _vless_server(address='proxy.example.com')
+        config = build_xray_config(cfg, srv)
+        dns = config['dns']['servers']
+        pinned = dns[0]
+        self.assertIsInstance(pinned, dict)
+        self.assertEqual(pinned['address'], '1.1.1.1')
+        self.assertIn('full:proxy.example.com', pinned['domains'])
+        self.assertIn('1.1.1.1', dns)
+        self.assertIn('8.8.8.8', dns)
+        self.assertIn('localhost', dns)
+
+    def test_dns_section_ip_server(self):
+        cfg = _base_cfg()
+        srv = _vless_server(address='1.2.3.4')
+        config = build_xray_config(cfg, srv)
+        dns = config['dns']['servers']
+        for entry in dns:
+            if isinstance(entry, dict):
+                self.fail('IP-address server should not get a pinned DNS entry')
+        self.assertIn('1.1.1.1', dns)
+        self.assertIn('8.8.8.8', dns)
+
+
+class TestNoDnsLoop(unittest.TestCase):
+    """Guard against the socket/FD leak that caused OOM on OPNsense.
+
+    When Xray uses domainStrategy "IPIfNonMatch" without explicit DNS
+    servers, every unmatched domain triggers a DNS lookup.  If DNS itself
+    routes through the tunnel, each lookup spawns more connections,
+    exhausting kern.maxfiles / kern.ipc.maxsockets and eventually swap.
+
+    These tests ensure the generated config is safe regardless of
+    protocol, address type, or bypass settings.
+    """
+
+    PROTOCOLS = ('vless', 'vmess', 'shadowsocks', 'trojan')
+
+    def _build(self, **server_overrides):
+        cfg = _base_cfg()
+        srv = _vless_server(**server_overrides)
+        return build_xray_config(cfg, srv)
+
+    # -- domainStrategy must never be IPIfNonMatch -------------------------
+
+    def test_domain_strategy_is_not_ipifnonmatch(self):
+        for proto in self.PROTOCOLS:
+            with self.subTest(protocol=proto):
+                kw = {'protocol': proto}
+                if proto in ('shadowsocks', 'trojan'):
+                    kw['password'] = 'pass'
+                config = self._build(**kw)
+                strategy = config['routing']['domainStrategy']
+                self.assertNotEqual(
+                    strategy, 'IPIfNonMatch',
+                    f'{proto}: IPIfNonMatch causes DNS loop → FD exhaustion',
+                )
+
+    # -- DNS section must always be present --------------------------------
+
+    def test_dns_section_always_present(self):
+        for proto in self.PROTOCOLS:
+            with self.subTest(protocol=proto):
+                kw = {'protocol': proto}
+                if proto in ('shadowsocks', 'trojan'):
+                    kw['password'] = 'pass'
+                config = self._build(**kw)
+                self.assertIn('dns', config)
+                servers = config['dns']['servers']
+                self.assertGreaterEqual(len(servers), 2,
+                                        'Need at least two DNS servers for redundancy')
+
+    def test_dns_contains_public_resolvers(self):
+        config = self._build()
+        flat = [s for s in config['dns']['servers'] if isinstance(s, str)]
+        self.assertTrue(
+            any(s in ('1.1.1.1', '8.8.8.8') for s in flat),
+            'DNS must include at least one public resolver to avoid tunnel loop',
+        )
+
+    # -- Domain-based proxy server must be DNS-pinned direct ---------------
+
+    def test_domain_server_has_dns_pin(self):
+        config = self._build(address='proxy.example.com')
+        dns = config['dns']['servers']
+        pinned_domains = []
+        for entry in dns:
+            if isinstance(entry, dict):
+                pinned_domains.extend(entry.get('domains', []))
+        self.assertIn(
+            'full:proxy.example.com', pinned_domains,
+            'Proxy server domain must be pinned to a direct DNS server',
+        )
+
+    def test_domain_server_has_direct_routing_rule(self):
+        config = self._build(address='proxy.example.com')
+        direct_domains = []
+        for rule in config['routing']['rules']:
+            if rule.get('outboundTag') == 'direct' and 'domain' in rule:
+                direct_domains.extend(rule['domain'])
+        self.assertIn(
+            'full:proxy.example.com', direct_domains,
+            'Proxy server domain must route direct to avoid tunnel loop',
+        )
+
+    # -- IP-based proxy server must route direct but skip DNS pin ----------
+
+    def test_ip_server_has_direct_routing_rule(self):
+        config = self._build(address='203.0.113.1')
+        direct_ips = []
+        for rule in config['routing']['rules']:
+            if rule.get('outboundTag') == 'direct' and 'ip' in rule:
+                direct_ips.extend(rule['ip'])
+        self.assertIn(
+            '203.0.113.1', direct_ips,
+            'Proxy server IP must route direct',
+        )
+
+    def test_ip_server_no_dns_pin(self):
+        config = self._build(address='203.0.113.1')
+        for entry in config['dns']['servers']:
+            if isinstance(entry, dict):
+                self.fail('IP-based server should not have a DNS pin entry')
+
+    # -- Every protocol produces a loop-safe config ------------------------
+
+    def test_all_protocols_loop_safe(self):
+        servers = [
+            _vless_server(address='vless.example.com'),
+            _vless_server(protocol='vmess', address='vmess.example.com',
+                          flow='', encryption='auto'),
+            _vless_server(protocol='shadowsocks', address='ss.example.com',
+                          password='pass', encryption='aes-256-gcm'),
+            _vless_server(protocol='trojan', address='trojan.example.com',
+                          password='pass'),
+        ]
+        for srv in servers:
+            with self.subTest(protocol=srv['protocol']):
+                cfg = _base_cfg()
+                config = build_xray_config(cfg, srv)
+                strategy = config['routing']['domainStrategy']
+                self.assertNotEqual(strategy, 'IPIfNonMatch')
+                self.assertIn('dns', config)
+                dns_pins = []
+                for entry in config['dns']['servers']:
+                    if isinstance(entry, dict):
+                        dns_pins.extend(entry.get('domains', []))
+                self.assertIn(
+                    'full:' + srv['address'], dns_pins,
+                    f"{srv['protocol']}: server domain must be DNS-pinned",
+                )
+
+    # -- Edge cases --------------------------------------------------------
+
+    def test_empty_bypass_still_has_dns_and_direct_rule(self):
+        cfg = _base_cfg(bypass_ips='')
+        srv = _vless_server(address='proxy.example.com')
+        config = build_xray_config(cfg, srv)
+        self.assertIn('dns', config)
+        has_direct = any(
+            r.get('outboundTag') == 'direct'
+            for r in config['routing']['rules']
+        )
+        self.assertTrue(has_direct,
+                        'Even with empty bypass_ips, proxy server must route direct')
 
 
 if __name__ == '__main__':

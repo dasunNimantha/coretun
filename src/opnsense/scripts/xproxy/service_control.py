@@ -174,16 +174,34 @@ def build_xray_config(cfg, server):
                 "outboundTag": "direct"
             })
 
-    # Do NOT enable Xray "access" logging to this file: with transparent LAN
-    # routing every TCP flow writes a line — gigabit / busy LANs can generate
-    # millions of sync writes, saturating disk I/O and freezing the firewall.
-    # Errors only go to LOG_FILE; use UI log tab for diagnostics.
+    # Xray's built-in DNS prevents a routing loop: without it,
+    # domainStrategy "IPIfNonMatch" resolves names through the tunnel,
+    # each lookup opens new connections, and sockets/FDs spiral until
+    # the kernel kills the process.  "AsIs" + explicit DNS servers
+    # breaks the cycle — proxy-server lookups go direct via 1.1.1.1,
+    # everything else is forwarded as-is without triggering resolution.
+    dns_servers = [
+        "1.1.1.1",
+        "8.8.8.8",
+        "localhost",
+    ]
+    addr = (server.get('address') or '').strip()
+    if addr:
+        try:
+            ipaddress.ip_address(addr)
+        except ValueError:
+            dns_servers.insert(0, {
+                "address": "1.1.1.1",
+                "domains": ["full:" + addr],
+            })
+
     config = {
         "log": {"loglevel": log_level, "error": LOG_FILE},
+        "dns": {"servers": dns_servers},
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {
-            "domainStrategy": "IPIfNonMatch",
+            "domainStrategy": "AsIs",
             "rules": routing_rules
         }
     }
