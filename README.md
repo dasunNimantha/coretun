@@ -1,7 +1,5 @@
 # xproxy
 
-Category: `security/xproxy`
-
 OPNsense plugin for Xray-core with transparent LAN routing.
 
 When enabled, all LAN traffic is routed through a VLESS, VMess, Shadowsocks, or Trojan tunnel — no configuration needed on individual devices.
