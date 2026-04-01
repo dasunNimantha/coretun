@@ -155,6 +155,45 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
             $defaults
         );
 
+        /* Bypass: let traffic to local/private networks pass directly
+         * without entering the tunnel, so LAN-to-LAN transfers (Samba,
+         * NFS, etc.) are not degraded by the tun2socks round-trip. */
+        $mdl_bypass = new \OPNsense\Xproxy\Xproxy();
+        $bypassRaw = (string)$mdl_bypass->general->bypass_ips;
+        if (!empty($bypassRaw)) {
+            foreach (explode(',', $bypassRaw) as $cidr) {
+                $cidr = trim($cidr);
+                if (empty($cidr)) {
+                    continue;
+                }
+                $fw->registerFilterRule(
+                    175,
+                    array(
+                        'interface' => $ifent,
+                        'descr' => 'Xproxy: bypass tunnel for ' . $cidr . ' (' . $ifent . ')',
+                        'from' => $ifent,
+                        'to' => $cidr,
+                        'direction' => 'in',
+                    ),
+                    $defaults
+                );
+            }
+        }
+
+        /* Also bypass traffic destined for the same interface network
+         * in case it is not covered by the bypass list above. */
+        $fw->registerFilterRule(
+            176,
+            array(
+                'interface' => $ifent,
+                'descr' => 'Xproxy: bypass tunnel for same-subnet (' . $ifent . ')',
+                'from' => $ifent,
+                'to' => $ifent,
+                'direction' => 'in',
+            ),
+            $defaults
+        );
+
         $fw->registerFilterRule(
             200,
             array(

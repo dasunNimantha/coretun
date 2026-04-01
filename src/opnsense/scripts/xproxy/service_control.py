@@ -177,8 +177,8 @@ def build_xray_config(cfg, server):
     # Xray's built-in DNS prevents a routing loop: without it,
     # domainStrategy "IPIfNonMatch" resolves names through the tunnel,
     # each lookup opens new connections, and sockets/FDs spiral until
-    # the kernel kills the process.  "AsIs" + explicit DNS servers
-    # breaks the cycle — proxy-server lookups go direct via 1.1.1.1,
+    # the kernel kills the process. "AsIs" + explicit DNS servers
+    # breaks the cycle -- proxy-server lookups go direct via 1.1.1.1,
     # everything else is forwarded as-is without triggering resolution.
     dns_servers = [
         "1.1.1.1",
@@ -471,7 +471,7 @@ def do_start():
         return
     server = find_active_server(cfg)
     if server is None:
-        log_error('xproxy: no server matches the active selection — go to General tab and select a server')
+        log_error('xproxy: no server matches the active selection -- go to General tab and select a server')
         return
     if not (server.get('address') or '').strip():
         log_error('xproxy: active server has no address')
