@@ -73,6 +73,8 @@ function xproxy_policy_route_enabled()
     if (empty($active)) {
         return false;
     }
+
+    // Check both current and legacy PID file locations
     $pidFile = '/var/run/xproxy_xray.pid';
     if (!file_exists($pidFile)) {
         return false;
@@ -81,14 +83,18 @@ function xproxy_policy_route_enabled()
     if ($pid <= 0) {
         return false;
     }
-    exec('/bin/kill -0 ' . escapeshellarg($pid) . ' 2>/dev/null', $out, $ret);
+    exec('/bin/kill -0 ' . escapeshellarg((string)$pid) . ' 2>/dev/null', $out, $ret);
     if ($ret !== 0) {
         return false;
     }
-    /* tun2socks must be alive when installed: route-to tun9 is useless otherwise. */
-    $tunBin = '/usr/local/bin/tun2socks';
+
+    $tunBin = '/usr/local/bin/hev-socks5-tunnel';
     if (is_file($tunBin)) {
-        $tunPidFile = '/var/run/xproxy_tun2socks.pid';
+        // Check both current and legacy PID file names
+        $tunPidFile = '/var/run/xproxy_hev.pid';
+        if (!file_exists($tunPidFile)) {
+            $tunPidFile = '/var/run/xproxy_tun2socks.pid';
+        }
         if (!file_exists($tunPidFile)) {
             return false;
         }
@@ -101,6 +107,7 @@ function xproxy_policy_route_enabled()
             return false;
         }
     }
+
     foreach ($mdl->servers->server->iterateItems() as $uuid => $srv) {
         if ($uuid === $active) {
             return true;
@@ -129,6 +136,18 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
         return;
     }
 
+    $mdl = new \OPNsense\Xproxy\Xproxy();
+    $bypassRaw = (string)$mdl->general->bypass_ips;
+    $bypassCidrs = array();
+    if (!empty($bypassRaw)) {
+        foreach (explode(',', $bypassRaw) as $cidr) {
+            $cidr = trim($cidr);
+            if (!empty($cidr)) {
+                $bypassCidrs[] = $cidr;
+            }
+        }
+    }
+
     foreach ($config['interfaces'] as $ifent => $iface) {
         if (!is_array($iface) || empty($iface['enable'])) {
             continue;
@@ -136,13 +155,11 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
         if (!empty($iface['virtual'])) {
             continue;
         }
-        if ($ifent === 'wan') {
-            continue;
-        }
-        if ($ifent === 'xproxytun') {
+        if ($ifent === 'wan' || $ifent === 'xproxytun') {
             continue;
         }
 
+        // Allow access to the firewall itself (anti-lockout)
         $fw->registerFilterRule(
             150,
             array(
@@ -155,33 +172,22 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
             $defaults
         );
 
-        /* Bypass: let traffic to local/private networks pass directly
-         * without entering the tunnel, so LAN-to-LAN transfers (Samba,
-         * NFS, etc.) are not degraded by the tun2socks round-trip. */
-        $mdl_bypass = new \OPNsense\Xproxy\Xproxy();
-        $bypassRaw = (string)$mdl_bypass->general->bypass_ips;
-        if (!empty($bypassRaw)) {
-            foreach (explode(',', $bypassRaw) as $cidr) {
-                $cidr = trim($cidr);
-                if (empty($cidr)) {
-                    continue;
-                }
-                $fw->registerFilterRule(
-                    175,
-                    array(
-                        'interface' => $ifent,
-                        'descr' => 'Xproxy: bypass tunnel for ' . $cidr . ' (' . $ifent . ')',
-                        'from' => $ifent,
-                        'to' => $cidr,
-                        'direction' => 'in',
-                    ),
-                    $defaults
-                );
-            }
+        // Bypass: let traffic to local/private networks pass directly
+        foreach ($bypassCidrs as $cidr) {
+            $fw->registerFilterRule(
+                175,
+                array(
+                    'interface' => $ifent,
+                    'descr' => 'Xproxy: bypass tunnel for ' . $cidr . ' (' . $ifent . ')',
+                    'from' => $ifent,
+                    'to' => $cidr,
+                    'direction' => 'in',
+                ),
+                $defaults
+            );
         }
 
-        /* Also bypass traffic destined for the same interface network
-         * in case it is not covered by the bypass list above. */
+        // Bypass traffic destined for the same interface network
         $fw->registerFilterRule(
             176,
             array(
@@ -194,11 +200,12 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
             $defaults
         );
 
+        // Route all other IPv4 traffic through the tunnel
         $fw->registerFilterRule(
             200,
             array(
                 'interface' => $ifent,
-                'descr' => 'Xproxy: route IPv4 via VLESS tunnel (' . $ifent . ')',
+                'descr' => 'Xproxy: route IPv4 via tunnel (' . $ifent . ')',
                 'from' => $ifent,
                 'to' => 'any',
                 'direction' => 'in',

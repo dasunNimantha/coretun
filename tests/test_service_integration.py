@@ -251,6 +251,69 @@ class TestEndToEndPipeline(unittest.TestCase):
         reparsed = json.loads(serialized)
         self.assertEqual(reparsed, xray_config)
 
+    def test_pipeline_produces_hardened_config(self):
+        """Verify the full pipeline includes all hardening features."""
+        uri = (
+            'vless://uuid@proxy.example.com:443'
+            '?type=tcp&security=reality&pbk=key&sni=sni.com'
+            '&sid=abc&fp=chrome&flow=xtls-rprx-vision#server'
+        )
+        parsed = parse_uri(uri)
+        cfg = {
+            'socks_port': 10808, 'http_port': 10809,
+            'socks_listen': '127.0.0.1', 'http_listen': '127.0.0.1',
+            'log_level': 'warning', 'bypass_ips': '10.0.0.0/8',
+        }
+        xray_config = build_xray_config(cfg, parsed)
+
+        self.assertIn('policy', xray_config)
+        self.assertEqual(xray_config['policy']['levels']['0']['connIdle'], 15)
+
+        socks = xray_config['inbounds'][0]
+        self.assertTrue(socks['sniffing']['enabled'])
+
+        self.assertFalse(xray_config['dns']['disableCache'])
+
+        sockopt = xray_config['outbounds'][0]['streamSettings']['sockopt']
+        self.assertTrue(sockopt['tcpFastOpen'])
+        self.assertTrue(sockopt['tcpNoDelay'])
+
+    def test_vmess_pipeline(self):
+        import base64
+        vmess_cfg = json.dumps({
+            'v': '2', 'ps': 'vmess-test', 'add': 'vmess.host.com',
+            'port': 443, 'id': 'test-uuid', 'aid': 0,
+            'scy': 'auto', 'net': 'ws', 'tls': 'tls',
+            'sni': 'vmess.host.com', 'path': '/ws',
+        })
+        uri = 'vmess://' + base64.b64encode(vmess_cfg.encode()).decode()
+        parsed = parse_uri(uri)
+        cfg = {
+            'socks_port': 10808, 'http_port': 10809,
+            'socks_listen': '127.0.0.1', 'http_listen': '127.0.0.1',
+            'log_level': 'warning', 'bypass_ips': '',
+        }
+        xray_config = build_xray_config(cfg, parsed)
+        self.assertEqual(xray_config['outbounds'][0]['protocol'], 'vmess')
+        self.assertIn('wsSettings',
+                      xray_config['outbounds'][0]['streamSettings'])
+
+    def test_shadowsocks_pipeline(self):
+        import base64
+        method_pass = base64.b64encode(b'aes-256-gcm:mypass').decode()
+        uri = f'ss://{method_pass}@ss.host.com:8388#my-ss'
+        parsed = parse_uri(uri)
+        cfg = {
+            'socks_port': 10808, 'http_port': 10809,
+            'socks_listen': '127.0.0.1', 'http_listen': '127.0.0.1',
+            'log_level': 'warning', 'bypass_ips': '',
+        }
+        xray_config = build_xray_config(cfg, parsed)
+        self.assertEqual(xray_config['outbounds'][0]['protocol'], 'shadowsocks')
+        server = xray_config['outbounds'][0]['settings']['servers'][0]
+        self.assertEqual(server['password'], 'mypass')
+        self.assertEqual(server['method'], 'aes-256-gcm')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -51,7 +51,20 @@ class ServersController extends ApiMutableModelControllerBase
 
     public function addItemAction()
     {
-        return $this->addBase("server", "servers.server");
+        $result = $this->addBase("server", "servers.server");
+        if (isset($result['uuid']) && isset($result['result']) && $result['result'] === 'saved') {
+            $mdl = $this->getModel();
+            if (empty((string)$mdl->general->active_server)) {
+                $mdl->general->active_server = $result['uuid'];
+                $mdl->serializeToConfig();
+                \OPNsense\Core\Config::getInstance()->save();
+                $node = $mdl->getNodeByReference("servers.server." . $result['uuid']);
+                if ($node !== null) {
+                    $result['auto_selected'] = (string)$node->description;
+                }
+            }
+        }
+        return $result;
     }
 
     public function getItemAction($uuid = null)
@@ -62,12 +75,24 @@ class ServersController extends ApiMutableModelControllerBase
     public function delItemAction($uuid)
     {
         $mdl = $this->getModel();
-        if ((string)$mdl->general->active_server === $uuid) {
+        $wasActive = ((string)$mdl->general->active_server === $uuid);
+        if ($wasActive) {
             $mdl->general->active_server = '';
             $mdl->serializeToConfig();
             \OPNsense\Core\Config::getInstance()->save();
         }
-        return $this->delBase("servers.server", $uuid);
+        $result = $this->delBase("servers.server", $uuid);
+        if ($wasActive && isset($result['result']) && $result['result'] === 'deleted') {
+            $mdl = $this->getModel();
+            foreach ($mdl->servers->server->iterateItems() as $remainingUuid => $item) {
+                $mdl->general->active_server = $remainingUuid;
+                $mdl->serializeToConfig();
+                \OPNsense\Core\Config::getInstance()->save();
+                $result['auto_selected'] = (string)$item->description;
+                break;
+            }
+        }
+        return $result;
     }
 
     /**

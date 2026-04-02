@@ -64,6 +64,16 @@ class TestSafeInt(unittest.TestCase):
         self.assertEqual(_safe_int('99999', 80, maximum=65535), 80)
         self.assertEqual(_safe_int('443', 80, minimum=1, maximum=65535), 443)
 
+    def test_whitespace_stripped(self):
+        self.assertEqual(_safe_int('  443  ', 80), 443)
+
+    def test_negative_within_range(self):
+        self.assertEqual(_safe_int('-1', 80, minimum=0), 80)
+
+    def test_boundary_values(self):
+        self.assertEqual(_safe_int('1', 80, minimum=1, maximum=65535), 1)
+        self.assertEqual(_safe_int('65535', 80, minimum=1, maximum=65535), 65535)
+
 
 class TestBuildStreamSettings(unittest.TestCase):
 
@@ -112,6 +122,52 @@ class TestBuildStreamSettings(unittest.TestCase):
         self.assertEqual(stream['httpupgradeSettings']['path'], '/upgrade')
         self.assertEqual(stream['httpupgradeSettings']['host'], 'up.host')
 
+    def test_sockopt_always_present(self):
+        for transport in ('tcp', 'ws', 'grpc', 'h2', 'httpupgrade'):
+            with self.subTest(transport=transport):
+                srv = _vless_server(transport=transport)
+                stream = build_stream_settings(srv)
+                self.assertIn('sockopt', stream)
+                sockopt = stream['sockopt']
+                self.assertTrue(sockopt['tcpFastOpen'])
+                self.assertTrue(sockopt['tcpNoDelay'])
+                self.assertEqual(sockopt['tcpKeepAliveInterval'], 30)
+
+    def test_sockopt_tcp_fast_open(self):
+        srv = _vless_server()
+        stream = build_stream_settings(srv)
+        self.assertTrue(stream['sockopt']['tcpFastOpen'])
+
+    def test_sockopt_tcp_no_delay(self):
+        srv = _vless_server()
+        stream = build_stream_settings(srv)
+        self.assertTrue(stream['sockopt']['tcpNoDelay'])
+
+    def test_tls_without_sni(self):
+        srv = _vless_server(security='tls', sni='', fingerprint='chrome')
+        stream = build_stream_settings(srv)
+        self.assertNotIn('serverName', stream['tlsSettings'])
+
+    def test_tls_without_fingerprint(self):
+        srv = _vless_server(security='tls', sni='host.com', fingerprint='')
+        stream = build_stream_settings(srv)
+        self.assertNotIn('fingerprint', stream['tlsSettings'])
+
+    def test_reality_default_fingerprint(self):
+        srv = _vless_server(fingerprint='')
+        stream = build_stream_settings(srv)
+        self.assertEqual(stream['realitySettings']['fingerprint'], 'chrome')
+
+    def test_websocket_no_host(self):
+        srv = _vless_server(transport='ws', transport_path='/ws', transport_host='')
+        stream = build_stream_settings(srv)
+        self.assertNotIn('headers', stream['wsSettings'])
+
+    def test_empty_transport_defaults_tcp(self):
+        srv = _vless_server(transport='')
+        stream = build_stream_settings(srv)
+        self.assertEqual(stream['network'], 'tcp')
+
 
 class TestBuildOutbound(unittest.TestCase):
 
@@ -154,6 +210,26 @@ class TestBuildOutbound(unittest.TestCase):
         out = build_outbound(srv)
         self.assertNotIn('flow', out['settings']['vnext'][0]['users'][0])
 
+    def test_vmess_default_encryption(self):
+        srv = _vless_server(protocol='vmess', encryption='', flow='')
+        out = build_outbound(srv)
+        self.assertEqual(out['settings']['vnext'][0]['users'][0]['security'], 'auto')
+
+    def test_shadowsocks_default_method(self):
+        srv = _vless_server(protocol='shadowsocks', encryption='', password='p')
+        out = build_outbound(srv)
+        self.assertEqual(out['settings']['servers'][0]['method'], 'aes-256-gcm')
+
+    def test_outbound_has_stream_settings(self):
+        for proto in ('vless', 'vmess', 'shadowsocks', 'trojan'):
+            with self.subTest(protocol=proto):
+                kw = {'protocol': proto, 'flow': ''}
+                if proto in ('shadowsocks', 'trojan'):
+                    kw['password'] = 'pass'
+                srv = _vless_server(**kw)
+                out = build_outbound(srv)
+                self.assertIn('streamSettings', out)
+
 
 class TestBuildXrayConfig(unittest.TestCase):
 
@@ -164,6 +240,7 @@ class TestBuildXrayConfig(unittest.TestCase):
 
         self.assertIn('log', config)
         self.assertIn('dns', config)
+        self.assertIn('policy', config)
         self.assertIn('inbounds', config)
         self.assertIn('outbounds', config)
         self.assertIn('routing', config)
@@ -254,18 +331,152 @@ class TestBuildXrayConfig(unittest.TestCase):
         self.assertIn('1.1.1.1', dns)
         self.assertIn('8.8.8.8', dns)
 
+    # -- Policy settings (connection leak prevention) -----------------------
+
+    def test_policy_present(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        self.assertIn('policy', config)
+        self.assertIn('levels', config['policy'])
+        self.assertIn('0', config['policy']['levels'])
+
+    def test_policy_conn_idle(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        level0 = config['policy']['levels']['0']
+        self.assertEqual(level0['connIdle'], 15)
+
+    def test_policy_uplink_downlink_only(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        level0 = config['policy']['levels']['0']
+        self.assertEqual(level0['uplinkOnly'], 1)
+        self.assertEqual(level0['downlinkOnly'], 2)
+
+    def test_policy_buffer_size(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        level0 = config['policy']['levels']['0']
+        self.assertEqual(level0['bufferSize'], 512)
+
+    def test_policy_handshake_timeout(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        level0 = config['policy']['levels']['0']
+        self.assertEqual(level0['handshake'], 4)
+
+    # -- Inbound sniffing ---------------------------------------------------
+
+    def test_socks_inbound_sniffing_enabled(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        socks = next(i for i in config['inbounds'] if i['tag'] == 'socks-in')
+        self.assertIn('sniffing', socks)
+        self.assertTrue(socks['sniffing']['enabled'])
+        self.assertTrue(socks['sniffing']['routeOnly'])
+
+    def test_socks_sniffing_dest_override(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        socks = next(i for i in config['inbounds'] if i['tag'] == 'socks-in')
+        dest = socks['sniffing']['destOverride']
+        self.assertIn('http', dest)
+        self.assertIn('tls', dest)
+        self.assertIn('quic', dest)
+
+    def test_http_inbound_sniffing_enabled(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        http = next(i for i in config['inbounds'] if i['tag'] == 'http-in')
+        self.assertIn('sniffing', http)
+        self.assertTrue(http['sniffing']['enabled'])
+        self.assertTrue(http['sniffing']['routeOnly'])
+
+    def test_http_sniffing_dest_override(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        http = next(i for i in config['inbounds'] if i['tag'] == 'http-in')
+        dest = http['sniffing']['destOverride']
+        self.assertIn('http', dest)
+        self.assertIn('tls', dest)
+
+    # -- DNS optimizations --------------------------------------------------
+
+    def test_dns_cache_enabled(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        self.assertFalse(config['dns']['disableCache'])
+
+    def test_dns_query_strategy_ipv4(self):
+        cfg = _base_cfg()
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        self.assertEqual(config['dns']['queryStrategy'], 'UseIPv4')
+
+    # -- Listen address edge cases ------------------------------------------
+
+    def test_empty_socks_listen_defaults_localhost(self):
+        cfg = _base_cfg(socks_listen='')
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        socks = next(i for i in config['inbounds'] if i['tag'] == 'socks-in')
+        self.assertEqual(socks['listen'], '127.0.0.1')
+
+    def test_none_socks_listen_defaults_localhost(self):
+        cfg = _base_cfg(socks_listen=None)
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        socks = next(i for i in config['inbounds'] if i['tag'] == 'socks-in')
+        self.assertEqual(socks['listen'], '127.0.0.1')
+
+    def test_whitespace_listen_defaults_localhost(self):
+        cfg = _base_cfg(socks_listen='   ', http_listen='  ')
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        socks = next(i for i in config['inbounds'] if i['tag'] == 'socks-in')
+        http = next(i for i in config['inbounds'] if i['tag'] == 'http-in')
+        self.assertEqual(socks['listen'], '127.0.0.1')
+        self.assertEqual(http['listen'], '127.0.0.1')
+
+    # -- Bypass IPs edge cases ----------------------------------------------
+
+    def test_empty_bypass_ips_no_bypass_rule(self):
+        cfg = _base_cfg(bypass_ips='')
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        bypass_rules = [r for r in config['routing']['rules']
+                        if r.get('outboundTag') == 'direct' and 'ip' in r
+                        and any(ip.endswith('/8') or ip.endswith('/16') for ip in r['ip'])]
+        self.assertEqual(len(bypass_rules), 0)
+
+    def test_bypass_ips_with_extra_commas(self):
+        cfg = _base_cfg(bypass_ips=',10.0.0.0/8,,192.168.0.0/16,')
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        bypass_rule = config['routing']['rules'][0]
+        self.assertEqual(len(bypass_rule['ip']), 2)
+
+    def test_bypass_ips_whitespace_stripped(self):
+        cfg = _base_cfg(bypass_ips=' 10.0.0.0/8 , 192.168.0.0/16 ')
+        srv = _vless_server()
+        config = build_xray_config(cfg, srv)
+        bypass_rule = config['routing']['rules'][0]
+        self.assertIn('10.0.0.0/8', bypass_rule['ip'])
+        self.assertIn('192.168.0.0/16', bypass_rule['ip'])
+
 
 class TestNoDnsLoop(unittest.TestCase):
-    """Guard against the socket/FD leak that caused OOM on OPNsense.
-
-    When Xray uses domainStrategy "IPIfNonMatch" without explicit DNS
-    servers, every unmatched domain triggers a DNS lookup.  If DNS itself
-    routes through the tunnel, each lookup spawns more connections,
-    exhausting kern.maxfiles / kern.ipc.maxsockets and eventually swap.
-
-    These tests ensure the generated config is safe regardless of
-    protocol, address type, or bypass settings.
-    """
+    """Guard against the socket/FD leak that caused OOM on OPNsense."""
 
     PROTOCOLS = ('vless', 'vmess', 'shadowsocks', 'trojan')
 
@@ -273,8 +484,6 @@ class TestNoDnsLoop(unittest.TestCase):
         cfg = _base_cfg()
         srv = _vless_server(**server_overrides)
         return build_xray_config(cfg, srv)
-
-    # -- domainStrategy must never be IPIfNonMatch -------------------------
 
     def test_domain_strategy_is_not_ipifnonmatch(self):
         for proto in self.PROTOCOLS:
@@ -288,8 +497,6 @@ class TestNoDnsLoop(unittest.TestCase):
                     strategy, 'IPIfNonMatch',
                     f'{proto}: IPIfNonMatch causes DNS loop → FD exhaustion',
                 )
-
-    # -- DNS section must always be present --------------------------------
 
     def test_dns_section_always_present(self):
         for proto in self.PROTOCOLS:
@@ -310,8 +517,6 @@ class TestNoDnsLoop(unittest.TestCase):
             any(s in ('1.1.1.1', '8.8.8.8') for s in flat),
             'DNS must include at least one public resolver to avoid tunnel loop',
         )
-
-    # -- Domain-based proxy server must be DNS-pinned direct ---------------
 
     def test_domain_server_has_dns_pin(self):
         config = self._build(address='proxy.example.com')
@@ -336,8 +541,6 @@ class TestNoDnsLoop(unittest.TestCase):
             'Proxy server domain must route direct to avoid tunnel loop',
         )
 
-    # -- IP-based proxy server must route direct but skip DNS pin ----------
-
     def test_ip_server_has_direct_routing_rule(self):
         config = self._build(address='203.0.113.1')
         direct_ips = []
@@ -354,8 +557,6 @@ class TestNoDnsLoop(unittest.TestCase):
         for entry in config['dns']['servers']:
             if isinstance(entry, dict):
                 self.fail('IP-based server should not have a DNS pin entry')
-
-    # -- Every protocol produces a loop-safe config ------------------------
 
     def test_all_protocols_loop_safe(self):
         servers = [
@@ -382,8 +583,6 @@ class TestNoDnsLoop(unittest.TestCase):
                     'full:' + srv['address'], dns_pins,
                     f"{srv['protocol']}: server domain must be DNS-pinned",
                 )
-
-    # -- Edge cases --------------------------------------------------------
 
     def test_empty_bypass_still_has_dns_and_direct_rule(self):
         cfg = _base_cfg(bypass_ips='')

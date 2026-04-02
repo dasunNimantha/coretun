@@ -3,7 +3,7 @@
 """
 Xproxy service lifecycle manager.
 Reads OPNsense config.xml, generates xray-core config, manages
-xray-core and tun2socks processes, and configures the TUN interface.
+xray-core and hev-socks5-tunnel processes, and configures the TUN interface.
 
 Usage: service_control.py <start|stop|restart|reconfigure|status>
 """
@@ -17,19 +17,58 @@ import time
 import subprocess
 import ipaddress
 import xml.etree.ElementTree as ET
+import fcntl
 
 CONFIG_XML = '/conf/config.xml'
 XRAY_BIN = '/usr/local/bin/xray'
-TUN2SOCKS_BIN = '/usr/local/bin/tun2socks'
+HEV_BIN = '/usr/local/bin/hev-socks5-tunnel'
 CONFIG_DIR = '/usr/local/etc/xproxy'
 XRAY_CONFIG = os.path.join(CONFIG_DIR, 'config.json')
+HEV_CONFIG = os.path.join(CONFIG_DIR, 'hev-socks5-tunnel.yml')
 XRAY_PID = '/var/run/xproxy_xray.pid'
-TUN2SOCKS_PID = '/var/run/xproxy_tun2socks.pid'
+HEV_PID = '/var/run/xproxy_hev.pid'
+LOCK_FILE = '/var/run/xproxy.lock'
 LOG_FILE = '/var/log/xproxy.log'
+LOG_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
 
 TUN_DEVICE_RE = re.compile(r'^tun[0-9]{1,3}$')
 SUPPORTED_PROTOCOLS = ('vless', 'vmess', 'shadowsocks', 'trojan')
 
+
+# ---------------------------------------------------------------------------
+# Locking — prevents concurrent start/stop/reconfigure from corrupting state
+# ---------------------------------------------------------------------------
+
+_lock_fd = None
+
+
+def _acquire_lock():
+    global _lock_fd
+    try:
+        _lock_fd = open(LOCK_FILE, 'w')
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (IOError, OSError):
+        log_error('xproxy: another instance is already running, waiting...')
+        try:
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX)
+        except (IOError, OSError):
+            pass
+
+
+def _release_lock():
+    global _lock_fd
+    if _lock_fd:
+        try:
+            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            _lock_fd.close()
+        except (IOError, OSError):
+            pass
+        _lock_fd = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _safe_int(value, default, minimum=None, maximum=None):
     try:
@@ -43,11 +82,39 @@ def _safe_int(value, default, minimum=None, maximum=None):
     return n
 
 
+def log_error(msg):
+    ts = time.strftime('%Y/%m/%d %H:%M:%S')
+    line = ts + ' ' + msg + '\n'
+    try:
+        with open(LOG_FILE, 'a') as f:
+            f.write(line)
+    except OSError:
+        pass
+    print(msg, file=sys.stderr)
+
+
+def _rotate_log():
+    """Rotate log file when it exceeds LOG_MAX_BYTES instead of truncating."""
+    try:
+        if os.path.getsize(LOG_FILE) > LOG_MAX_BYTES:
+            rotated = LOG_FILE + '.1'
+            if os.path.exists(rotated):
+                os.unlink(rotated)
+            os.rename(LOG_FILE, rotated)
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Config reading
+# ---------------------------------------------------------------------------
+
 def read_config():
     """Read xproxy settings from OPNsense config.xml."""
     try:
         tree = ET.parse(CONFIG_XML)
-    except (ET.ParseError, OSError):
+    except (ET.ParseError, OSError) as e:
+        log_error('xproxy: failed to parse config.xml: %s' % e)
         return None
     root = tree.getroot()
     xp = root.find('.//OPNsense/xproxy')
@@ -119,6 +186,10 @@ def find_active_server(cfg):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Xray config generation
+# ---------------------------------------------------------------------------
+
 def build_xray_config(cfg, server):
     """Generate xray-core JSON config for the active server."""
     socks_port = cfg['socks_port']
@@ -134,21 +205,31 @@ def build_xray_config(cfg, server):
             "protocol": "socks",
             "listen": socks_listen,
             "port": socks_port,
-            "settings": {"udp": True}
+            "settings": {"udp": True},
+            "sniffing": {
+                "enabled": True,
+                "destOverride": ["http", "tls", "quic"],
+                "routeOnly": True,
+            },
         },
         {
             "tag": "http-in",
             "protocol": "http",
             "listen": http_listen,
-            "port": http_port
-        }
+            "port": http_port,
+            "sniffing": {
+                "enabled": True,
+                "destOverride": ["http", "tls"],
+                "routeOnly": True,
+            },
+        },
     ]
 
     outbound = build_outbound(server)
     outbounds = [
         outbound,
         {"tag": "direct", "protocol": "freedom"},
-        {"tag": "block", "protocol": "blackhole"}
+        {"tag": "block", "protocol": "blackhole"},
     ]
 
     routing_rules = []
@@ -156,54 +237,69 @@ def build_xray_config(cfg, server):
         routing_rules.append({
             "type": "field",
             "ip": bypass_list,
-            "outboundTag": "direct"
+            "outboundTag": "direct",
         })
-    addr = (server.get('address') or '').strip()
-    if addr:
+
+    server_addr = (server.get('address') or '').strip()
+    if server_addr:
         try:
-            ipaddress.ip_address(addr)
+            ipaddress.ip_address(server_addr)
             routing_rules.append({
                 "type": "field",
-                "ip": [addr],
-                "outboundTag": "direct"
+                "ip": [server_addr],
+                "outboundTag": "direct",
             })
         except ValueError:
             routing_rules.append({
                 "type": "field",
-                "domain": ["full:" + addr],
-                "outboundTag": "direct"
+                "domain": ["full:" + server_addr],
+                "outboundTag": "direct",
             })
 
     # Xray's built-in DNS prevents a routing loop: without it,
     # domainStrategy "IPIfNonMatch" resolves names through the tunnel,
     # each lookup opens new connections, and sockets/FDs spiral until
     # the kernel kills the process. "AsIs" + explicit DNS servers
-    # breaks the cycle -- proxy-server lookups go direct via 1.1.1.1,
+    # breaks the cycle — proxy-server lookups go direct via 1.1.1.1,
     # everything else is forwarded as-is without triggering resolution.
     dns_servers = [
         "1.1.1.1",
         "8.8.8.8",
         "localhost",
     ]
-    addr = (server.get('address') or '').strip()
-    if addr:
+    if server_addr:
         try:
-            ipaddress.ip_address(addr)
+            ipaddress.ip_address(server_addr)
         except ValueError:
             dns_servers.insert(0, {
                 "address": "1.1.1.1",
-                "domains": ["full:" + addr],
+                "domains": ["full:" + server_addr],
             })
 
     config = {
         "log": {"loglevel": log_level, "error": LOG_FILE},
-        "dns": {"servers": dns_servers},
+        "dns": {
+            "servers": dns_servers,
+            "disableCache": False,
+            "queryStrategy": "UseIPv4",
+        },
+        "policy": {
+            "levels": {
+                "0": {
+                    "handshake": 4,
+                    "connIdle": 15,
+                    "uplinkOnly": 1,
+                    "downlinkOnly": 2,
+                    "bufferSize": 512,
+                }
+            },
+        },
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {
             "domainStrategy": "AsIs",
-            "rules": routing_rules
-        }
+            "rules": routing_rules,
+        },
     }
     return config
 
@@ -234,7 +330,7 @@ def build_outbound(srv):
                 "address": srv['address'],
                 "port": srv['port'],
                 "method": srv['encryption'] or 'aes-256-gcm',
-                "password": srv['password']
+                "password": srv['password'],
             }]
         }
     elif proto == 'trojan':
@@ -242,7 +338,7 @@ def build_outbound(srv):
             "servers": [{
                 "address": srv['address'],
                 "port": srv['port'],
-                "password": srv['password']
+                "password": srv['password'],
             }]
         }
 
@@ -300,27 +396,61 @@ def build_stream_settings(srv):
             hu["host"] = srv['transport_host']
         stream["httpupgradeSettings"] = hu
 
+    stream["sockopt"] = {
+        "tcpFastOpen": True,
+        "tcpNoDelay": True,
+        "tcpKeepAliveInterval": 30,
+    }
+
     return stream
 
 
 def write_xray_config(config):
     os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(XRAY_CONFIG, 'w') as f:
-        json.dump(config, f, indent=2)
+    tmp = XRAY_CONFIG + '.tmp'
+    try:
+        with open(tmp, 'w') as f:
+            json.dump(config, f, indent=2)
+        os.rename(tmp, XRAY_CONFIG)
+    except OSError as e:
+        log_error('xproxy: failed to write xray config: %s' % e)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
+
+def _validate_xray_config():
+    """Ask xray to parse the config without running; returns True on success."""
+    if not os.path.isfile(XRAY_BIN):
+        return True  # can't validate if binary missing; let start_xray fail
+    r = subprocess.run(
+        [XRAY_BIN, 'run', '-test', '-c', XRAY_CONFIG],
+        capture_output=True, timeout=10, check=False,
+    )
+    if r.returncode != 0:
+        log_error('xproxy: xray config validation failed: %s' %
+                  (r.stderr.decode('utf-8', errors='replace').strip()))
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# PID / process management
+# ---------------------------------------------------------------------------
 
 def read_pid(pidfile):
     try:
         with open(pidfile, 'r') as f:
-            return int(f.read().strip())
+            pid = int(f.read().strip())
+            return pid if pid > 0 else None
     except (IOError, ValueError):
         return None
 
 
-def is_running(pidfile):
-    pid = read_pid(pidfile)
-    if pid is None:
-        return False
+def _pid_running(pid):
+    """Check whether a specific PID is alive."""
     try:
         os.kill(pid, 0)
         return True
@@ -328,124 +458,357 @@ def is_running(pidfile):
         return False
 
 
-def kill_pid(pidfile):
+def _pid_is_ours(pid, expected_name):
+    """Verify the PID belongs to the expected binary (prevents stale-PID misfire)."""
+    try:
+        r = subprocess.run(
+            ['ps', '-o', 'comm=', '-p', str(pid)],
+            capture_output=True, timeout=5, check=False,
+        )
+        comm = r.stdout.decode('utf-8', errors='replace').strip()
+        return expected_name in comm
+    except (subprocess.TimeoutExpired, OSError):
+        return True  # can't verify — assume ours
+
+
+def is_running(pidfile, expected_name=None):
     pid = read_pid(pidfile)
     if pid is None:
-        return
-    try:
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(50):
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.1)
-            except OSError:
-                break
-    except OSError:
-        pass
+        return False
+    if not _pid_running(pid):
+        _cleanup_stale_pid(pidfile)
+        return False
+    if expected_name and not _pid_is_ours(pid, expected_name):
+        _cleanup_stale_pid(pidfile)
+        return False
+    return True
+
+
+def _cleanup_stale_pid(pidfile):
     try:
         os.unlink(pidfile)
     except OSError:
         pass
 
 
-def _go_env():
-    """Environment variables to limit Go runtime memory usage."""
+def kill_pid(pidfile, expected_name=None):
+    """SIGTERM with escalation to SIGKILL after 5 seconds."""
+    pid = read_pid(pidfile)
+    if pid is None:
+        return
+    if not _pid_running(pid):
+        _cleanup_stale_pid(pidfile)
+        return
+    if expected_name and not _pid_is_ours(pid, expected_name):
+        _cleanup_stale_pid(pidfile)
+        return
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        _cleanup_stale_pid(pidfile)
+        return
+
+    for _ in range(50):
+        time.sleep(0.1)
+        if not _pid_running(pid):
+            _cleanup_stale_pid(pidfile)
+            return
+
+    log_error('xproxy: PID %d did not exit after SIGTERM, sending SIGKILL' % pid)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    time.sleep(0.5)
+    _cleanup_stale_pid(pidfile)
+
+
+def _kill_orphans(binary_name):
+    """Find and kill any orphaned processes matching binary_name."""
+    try:
+        r = subprocess.run(
+            ['pgrep', '-f', binary_name],
+            capture_output=True, timeout=5, check=False,
+        )
+        if r.returncode != 0:
+            return
+        for line in r.stdout.decode('utf-8', errors='replace').strip().split('\n'):
+            pid_str = line.strip()
+            if pid_str and pid_str.isdigit():
+                pid = int(pid_str)
+                if pid != os.getpid():
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except OSError:
+                        pass
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Go runtime environment
+# ---------------------------------------------------------------------------
+
+def _xray_env():
+    """Go runtime tuning for sustained throughput.
+
+    GOGC=100 keeps the default collection frequency (lower values cause
+    more frequent GC pauses that choke streaming traffic).
+    GOMEMLIMIT gives the runtime headroom so it can batch collections
+    instead of stop-the-world pausing mid-transfer.
+    """
     env = os.environ.copy()
-    env['GOGC'] = '50'
-    env['GOMEMLIMIT'] = '128MiB'
+    env['GOGC'] = '100'
+    env['GOMEMLIMIT'] = '512MiB'
     return env
 
 
+# ---------------------------------------------------------------------------
+# Start / stop xray
+# ---------------------------------------------------------------------------
+
 def start_xray():
-    if is_running(XRAY_PID):
-        return
+    if is_running(XRAY_PID, 'xray'):
+        return True
+
+    if not os.path.isfile(XRAY_BIN):
+        log_error('xproxy: xray binary not found at %s' % XRAY_BIN)
+        return False
+
+    if not os.path.isfile(XRAY_CONFIG):
+        log_error('xproxy: xray config not found at %s' % XRAY_CONFIG)
+        return False
+
+    if not _validate_xray_config():
+        return False
+
     cmd = [
         '/usr/sbin/daemon', '-c', '-f', '-p', XRAY_PID,
-        XRAY_BIN, 'run', '-c', XRAY_CONFIG
+        XRAY_BIN, 'run', '-c', XRAY_CONFIG,
     ]
-    subprocess.run(cmd, env=_go_env(), check=False)
+    subprocess.run(cmd, env=_xray_env(), check=False)
+
     for _ in range(10):
         time.sleep(0.5)
-        if is_running(XRAY_PID):
-            return
+        if is_running(XRAY_PID, 'xray'):
+            return True
+
     log_error('xproxy: xray failed to start')
+    return False
 
 
-def start_tun2socks(cfg):
-    if is_running(TUN2SOCKS_PID):
-        return
+# ---------------------------------------------------------------------------
+# hev-socks5-tunnel config + lifecycle
+# ---------------------------------------------------------------------------
+
+def _write_hev_config(cfg):
+    """Generate a YAML config file for hev-socks5-tunnel."""
+    device = cfg.get('tun_device') or 'tun9'
+    address = (cfg.get('tun_address') or '10.255.0.1').strip()
+    socks_port = cfg['socks_port']
+
+    yml_lines = [
+        "tunnel:",
+        "  name: %s" % device,
+        "  mtu: 8500",
+        "  ipv4: %s" % address,
+        "",
+        "socks5:",
+        "  port: %d" % socks_port,
+        "  address: 127.0.0.1",
+        "  udp: 'udp'",
+        "",
+        "misc:",
+        "  task-stack-size: 86016",
+        "  tcp-buffer-size: 262144",
+        "  udp-read-write-timeout: 30000",
+        "  connect-timeout: 5000",
+        "  log-file: stderr",
+        "  log-level: warn",
+        "  pid-file: %s" % HEV_PID,
+    ]
+    yml = '\n'.join(yml_lines) + '\n'
+
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    tmp = HEV_CONFIG + '.tmp'
+    try:
+        with open(tmp, 'w') as f:
+            f.write(yml)
+        os.rename(tmp, HEV_CONFIG)
+    except OSError as e:
+        log_error('xproxy: failed to write hev config: %s' % e)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def start_hev(cfg):
+    if is_running(HEV_PID, 'hev-socks5-tunnel'):
+        return True
+
+    if not os.path.isfile(HEV_BIN):
+        log_error('xproxy: hev-socks5-tunnel binary not found at %s' % HEV_BIN)
+        return False
+
     device = cfg.get('tun_device') or 'tun9'
     if not TUN_DEVICE_RE.match(device):
-        return
+        log_error('xproxy: invalid TUN device name: %s' % device)
+        return False
+
+    # Also handle legacy PID file location
+    for stale_pid in [HEV_PID, '/var/run/xproxy_tun2socks.pid']:
+        kill_pid(stale_pid, 'hev-socks5-tunnel')
 
     subprocess.run(
         ['ifconfig', device, 'destroy'],
-        capture_output=True, check=False
+        capture_output=True, check=False,
     )
 
-    socks_addr = '127.0.0.1:%d' % cfg['socks_port']
-    cmd = [
-        '/usr/sbin/daemon', '-c', '-f', '-p', TUN2SOCKS_PID,
-        TUN2SOCKS_BIN,
-        '-device', 'tun://' + device,
-        '-proxy', 'socks5://' + socks_addr,
-        '-tcp-rcvbuf', '32k',
-        '-tcp-sndbuf', '32k',
-        '-udp-timeout', '30s',
-    ]
+    _write_hev_config(cfg)
+    cmd = ['/usr/sbin/daemon', '-c', '-f', HEV_BIN, HEV_CONFIG]
 
     for attempt in range(3):
-        subprocess.run(cmd, env=_go_env(), check=False)
+        subprocess.run(cmd, check=False)
         for _ in range(20):
             time.sleep(0.5)
-            if is_running(TUN2SOCKS_PID):
-                return
-        kill_pid(TUN2SOCKS_PID)
+            if is_running(HEV_PID, 'hev-socks5-tunnel'):
+                return True
+        log_error('xproxy: hev-socks5-tunnel attempt %d failed' % (attempt + 1))
+        kill_pid(HEV_PID, 'hev-socks5-tunnel')
         subprocess.run(
             ['ifconfig', device, 'destroy'],
-            capture_output=True, check=False
+            capture_output=True, check=False,
         )
         if attempt < 2:
             time.sleep(2)
-    log_error('xproxy: tun2socks failed to start after retries')
+
+    log_error('xproxy: hev-socks5-tunnel failed to start after 3 retries')
+    return False
+
+
+# ---------------------------------------------------------------------------
+# TUN interface configuration
+# ---------------------------------------------------------------------------
+
+def _tun_exists(device):
+    """Check whether the TUN device exists via ifconfig."""
+    r = subprocess.run(
+        ['ifconfig', device],
+        capture_output=True, check=False,
+    )
+    return r.returncode == 0
+
+
+def _tun_has_addr(device, address, gateway):
+    """Check whether the TUN device has the expected address AND gateway."""
+    r = subprocess.run(
+        ['ifconfig', device],
+        capture_output=True, check=False,
+    )
+    if r.returncode != 0:
+        return False
+    out = r.stdout.decode('utf-8', errors='replace')
+    # FreeBSD shows "inet 10.255.0.1 --> 10.255.0.2" for point-to-point
+    return address in out and gateway in out
 
 
 def configure_tun(cfg):
+    """Assign the inet address and point-to-point gateway on the TUN device.
+
+    hev-socks5-tunnel creates the interface and sets the MTU, but on
+    FreeBSD it does not assign an inet address.  We must wait for the
+    device to appear, then configure local + gateway so OPNsense can
+    route through XPROXY_TUN.
+    """
     device = cfg.get('tun_device') or 'tun9'
     if not TUN_DEVICE_RE.match(device):
-        return
+        return False
     address = (cfg.get('tun_address') or '').strip()
     gateway = (cfg.get('tun_gateway') or '').strip()
     try:
         a = ipaddress.ip_address(address)
         g = ipaddress.ip_address(gateway)
         if a.version != 4 or g.version != 4:
-            return
+            log_error('xproxy: TUN addresses must be IPv4')
+            return False
     except ValueError:
-        return
-    mtu = str(cfg['tun_mtu'])
+        log_error('xproxy: invalid TUN address=%s or gateway=%s' % (address, gateway))
+        return False
+
+    for _ in range(20):
+        if _tun_exists(device):
+            break
+        time.sleep(0.5)
+    else:
+        log_error('xproxy: %s did not appear after 10s — cannot configure' % device)
+        return False
+
+    if _tun_has_addr(device, address, gateway):
+        return True
+
+    r = subprocess.run(
+        ['ifconfig', device, 'inet', address, gateway, 'up'],
+        capture_output=True, check=False,
+    )
+    if r.returncode != 0:
+        stderr = r.stderr.decode('utf-8', errors='replace').strip()
+        log_error('xproxy: ifconfig %s failed: %s' % (device, stderr))
+        return False
+
+    if not _tun_has_addr(device, address, gateway):
+        log_error('xproxy: %s address/gateway not assigned after ifconfig' % device)
+        return False
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# PF state flushing
+# ---------------------------------------------------------------------------
+
+def _flush_pf_states():
+    """Flush PF state table so connections re-route through the new tunnel.
+
+    Stale PF states from a previous tunnel session cause traffic to bypass
+    the new tunnel, leading to ISP IP leaking or broken routing.
+    """
     subprocess.run(
-        ['ifconfig', device, address, gateway, 'mtu', mtu, 'up'],
-        check=False
+        ['pfctl', '-F', 'states'],
+        capture_output=True, check=False,
     )
 
 
+# ---------------------------------------------------------------------------
+# Stop / cleanup
+# ---------------------------------------------------------------------------
+
 def stop_services(cfg):
-    kill_pid(TUN2SOCKS_PID)
+    """Stop hev-socks5-tunnel and xray, destroy TUN device, clean orphans."""
+    kill_pid(HEV_PID, 'hev-socks5-tunnel')
+    # Handle legacy PID file
+    legacy_pid = '/var/run/xproxy_tun2socks.pid'
+    if os.path.exists(legacy_pid):
+        kill_pid(legacy_pid, 'hev-socks5-tunnel')
+
     device = (cfg.get('tun_device', 'tun9') if cfg else 'tun9') or 'tun9'
     if TUN_DEVICE_RE.match(device):
-        subprocess.run(['ifconfig', device, 'destroy'], capture_output=True, check=False)
-    kill_pid(XRAY_PID)
+        subprocess.run(
+            ['ifconfig', device, 'destroy'],
+            capture_output=True, check=False,
+        )
+
+    kill_pid(XRAY_PID, 'xray')
+
+    _kill_orphans('hev-socks5-tunnel')
+    _kill_orphans(XRAY_BIN)
 
 
-def log_error(msg):
-    try:
-        with open(LOG_FILE, 'a') as f:
-            f.write(time.strftime('%Y/%m/%d %H:%M:%S') + ' ' + msg + '\n')
-    except OSError:
-        pass
-    print(msg, file=sys.stderr)
-
+# ---------------------------------------------------------------------------
+# Filter reload (detached to avoid configd deadlock)
+# ---------------------------------------------------------------------------
 
 def schedule_filter_reload():
     """Spawn a detached filter reload that runs after this configd action exits.
@@ -465,13 +828,42 @@ def schedule_filter_reload():
     )
 
 
+# ---------------------------------------------------------------------------
+# sysctl network tuning
+# ---------------------------------------------------------------------------
+
+_SYSCTL_TUNABLES = {
+    'kern.ipc.maxsockbuf': '16777216',
+    'net.inet.tcp.recvbuf_max': '8388608',
+    'net.inet.tcp.sendbuf_max': '8388608',
+    'net.inet.tcp.recvspace': '262144',
+    'net.inet.tcp.sendspace': '262144',
+    'net.inet.tcp.fast_finwait2_recycle': '1',
+    'net.inet.tcp.finwait2_timeout': '5000',
+}
+
+
+def _apply_sysctl_tuning():
+    """Apply TCP buffer tuning at runtime (idempotent)."""
+    for key, val in _SYSCTL_TUNABLES.items():
+        subprocess.run(
+            ['sysctl', '%s=%s' % (key, val)],
+            capture_output=True, check=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
 def do_start():
     cfg = read_config()
     if cfg is None or cfg['enabled'] != '1':
         return
     server = find_active_server(cfg)
     if server is None:
-        log_error('xproxy: no server matches the active selection -- go to General tab and select a server')
+        log_error('xproxy: no server matches the active selection — '
+                  'go to General tab and select a server')
         return
     if not (server.get('address') or '').strip():
         log_error('xproxy: active server has no address')
@@ -479,45 +871,48 @@ def do_start():
     if server.get('protocol') not in SUPPORTED_PROTOCOLS:
         log_error('xproxy: unsupported protocol %r' % (server.get('protocol'),))
         return
+
+    _apply_sysctl_tuning()
+
     xray_config = build_xray_config(cfg, server)
     write_xray_config(xray_config)
-    start_xray()
-    if os.path.exists(TUN2SOCKS_BIN):
-        start_tun2socks(cfg)
-        configure_tun(cfg)
+
+    if not start_xray():
+        return
+
+    if os.path.isfile(HEV_BIN):
+        if start_hev(cfg):
+            configure_tun(cfg)
+
+    _flush_pf_states()
     schedule_filter_reload()
 
 
 def do_stop():
     cfg = read_config()
     stop_services(cfg)
+    _flush_pf_states()
     schedule_filter_reload()
-
-
-def truncate_log():
-    try:
-        open(LOG_FILE, 'w').close()
-    except OSError:
-        pass
 
 
 def do_reconfigure():
     cfg = read_config()
     stop_services(cfg)
-    truncate_log()
+    _rotate_log()
     if cfg and cfg['enabled'] == '1':
         do_start()
     else:
+        _flush_pf_states()
         schedule_filter_reload()
 
 
 def do_status():
-    xray_up = is_running(XRAY_PID)
-    tun_up = is_running(TUN2SOCKS_PID)
+    xray_up = is_running(XRAY_PID, 'xray')
+    tun_up = is_running(HEV_PID, 'hev-socks5-tunnel')
     if xray_up and tun_up:
         print("xproxy is running")
     elif xray_up:
-        print("xproxy is running (xray-core only, tun2socks not active)")
+        print("xproxy is running (xray-core only, tunnel not active)")
     else:
         print("xproxy is not running")
 
@@ -528,20 +923,27 @@ def main():
         sys.exit(1)
 
     action = sys.argv[1]
-    if action == 'start':
-        do_start()
-    elif action == 'stop':
-        do_stop()
-    elif action == 'restart':
-        do_stop()
-        do_start()
-    elif action == 'reconfigure':
-        do_reconfigure()
-    elif action == 'status':
+
+    if action == 'status':
         do_status()
-    else:
-        print("Unknown action: " + action)
-        sys.exit(1)
+        return
+
+    _acquire_lock()
+    try:
+        if action == 'start':
+            do_start()
+        elif action == 'stop':
+            do_stop()
+        elif action == 'restart':
+            do_stop()
+            do_start()
+        elif action == 'reconfigure':
+            do_reconfigure()
+        else:
+            print("Unknown action: " + action)
+            sys.exit(1)
+    finally:
+        _release_lock()
 
 
 if __name__ == '__main__':

@@ -119,6 +119,13 @@ class ImportController extends ApiControllerBase
                     $mdl = new Xproxy();
                     $merge = $this->mergeServersIntoModel($mdl, $parsed['servers']);
                     if ($merge['added'] > 0) {
+                        if (empty((string)$mdl->general->active_server)) {
+                            foreach ($mdl->servers->server->iterateItems() as $srvUuid => $srvItem) {
+                                $mdl->general->active_server = $srvUuid;
+                                $result["auto_selected"] = (string)$srvItem->description;
+                                break;
+                            }
+                        }
                         $mdl->serializeToConfig();
                         Config::getInstance()->save();
                         $result["result"] = "saved";

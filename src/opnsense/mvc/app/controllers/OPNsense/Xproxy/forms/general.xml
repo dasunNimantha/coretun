@@ -27,7 +27,7 @@
         <id>xproxy.general.socks_listen</id>
         <label>SOCKS5 Listen Address</label>
         <type>text</type>
-        <help>Address xray binds for SOCKS5. Use 127.0.0.1 for router-only (default). Set to this firewall's LAN IP or 0.0.0.0 so PCs on your network can use SOCKS5 at firewall_IP:SOCKS5_Port — then add a firewall rule allowing TCP to that port on This Firewall. Does not affect tun2socks (it always uses localhost).</help>
+        <help>Address xray binds for SOCKS5. Use 127.0.0.1 for router-only (default). Set to this firewall's LAN IP or 0.0.0.0 so PCs on your network can use SOCKS5 at firewall_IP:SOCKS5_Port — then add a firewall rule allowing TCP to that port on This Firewall. Does not affect the tunnel component (it always uses localhost).</help>
     </field>
     <field>
         <id>xproxy.general.http_listen</id>
@@ -39,13 +39,13 @@
         <id>xproxy.general.policy_route_lan</id>
         <label>Route LAN through tunnel</label>
         <type>checkbox</type>
-        <help>When Xproxy is enabled, automatically send IPv4 traffic from all enabled non-WAN interfaces through the TUN (tun2socks + VLESS). LAN devices need no proxy settings. A system gateway XPROXY_TUN and firewall rules are managed automatically. Disable if you only want local SOCKS/HTTP on the firewall.</help>
+        <help>When Xproxy is enabled, automatically send IPv4 traffic from all enabled non-WAN interfaces through the TUN (hev-socks5-tunnel + VLESS). LAN devices need no proxy settings. A system gateway XPROXY_TUN and firewall rules are managed automatically. Disable if you only want local SOCKS/HTTP on the firewall.</help>
     </field>
     <field>
         <id>xproxy.general.tun_device</id>
         <label>TUN Device</label>
         <type>text</type>
-        <help>Name of the TUN device for tun2socks (e.g. tun9).</help>
+        <help>Name of the TUN device (e.g. tun9).</help>
     </field>
     <field>
         <id>xproxy.general.tun_address</id>

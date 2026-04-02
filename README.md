@@ -6,7 +6,7 @@ When enabled, all LAN traffic is routed through a VLESS, VMess, Shadowsocks, or 
 
 ## Features
 
-- Transparent proxying via TUN interface (tun2socks) — phones, IoT, smart TVs, and guest devices are covered automatically
+- Transparent proxying via TUN interface (hev-socks5-tunnel) — phones, IoT, smart TVs, and guest devices are covered automatically
 - VLESS (with XTLS-Vision / Reality), VMess, Shadowsocks, and Trojan protocols
 - Import server profiles from standard proxy URIs (`vless://`, `vmess://`, `ss://`, `trojan://`)
 - Policy-based routing with dynamic firewall rules — rules are only active while the service is running
@@ -16,7 +16,7 @@ When enabled, all LAN traffic is routed through a VLESS, VMess, Shadowsocks, or 
 ## How it works
 
 1. **Xray-core** connects to the remote proxy server and exposes a local SOCKS5 endpoint
-2. **tun2socks** creates a TUN interface (`tun9`) that routes traffic through the SOCKS5 endpoint
+2. **hev-socks5-tunnel** creates a TUN interface (`tun9`) that routes traffic through the SOCKS5 endpoint
 3. The plugin registers a virtual interface (`xproxytun`) and gateway (`XPROXY_TUN`) in OPNsense
 4. Firewall rules route LAN traffic through the TUN gateway using OPNsense's `_firewall()` plugin hook
 
@@ -25,7 +25,7 @@ When enabled, all LAN traffic is routed through a VLESS, VMess, Shadowsocks, or 
 | Package | Source | Status |
 |---|---|---|
 | xray-core | [security/xray-core](https://www.freshports.org/security/xray-core/) | Installed by `install.sh` or manual setup |
-| tun2socks | [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) | Downloaded by `install.sh` / `xproxy setup` |
+| hev-socks5-tunnel | [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | Downloaded by `install.sh` / `xproxy setup` |
 
 ## Installation
 
@@ -35,7 +35,7 @@ SSH into your OPNsense firewall and run:
 fetch -o - https://raw.githubusercontent.com/dasunNimantha/xproxy/main/install.sh | sh
 ```
 
-The installer copies the plugin files, installs `xray-core`, downloads the `tun2socks` binary, and restarts `configd`.
+The installer copies the plugin files, installs `xray-core`, downloads the `hev-socks5-tunnel` binary, and restarts `configd`.
 
 Then navigate to **VPN > Xproxy** in the web UI to configure.
 

@@ -20,17 +20,33 @@
 <script>
     $(document).ready(function() {
         const data_get_map = {'frm_general_settings': "/api/xproxy/settings/get"};
-        mapDataToFormUI(data_get_map).done(function(data) {
-            formatTokenizersUI();
-            $('.selectpicker').selectpicker('refresh');
-        });
+        var gridId = "#{{formGridServer['table_id']}}";
+        var generalDirty = true;
 
-        $("#{{formGridServer['table_id']}}").UIBootgrid({
+        function refreshGeneralForm() {
+            generalDirty = false;
+            return mapDataToFormUI(data_get_map).done(function() {
+                formatTokenizersUI();
+                $('.selectpicker').selectpicker('refresh');
+            });
+        }
+
+        function markGeneralDirty() {
+            generalDirty = true;
+        }
+
+        refreshGeneralForm();
+
+        $(gridId).UIBootgrid({
             search: '/api/xproxy/servers/search_item',
             get: '/api/xproxy/servers/get_item/',
             set: '/api/xproxy/servers/set_item/',
             add: '/api/xproxy/servers/add_item/',
             del: '/api/xproxy/servers/del_item/',
+        });
+
+        $(gridId).on('loaded.rs.jquery.bootgrid', function() {
+            markGeneralDirty();
         });
 
         $("#reconfigureAct").SimpleActionButton({
@@ -64,9 +80,13 @@
                     if (data.skipped) {
                         msg += ' (' + data.skipped + ' {{ lang._("duplicate(s) skipped") }})';
                     }
+                    if (data.auto_selected) {
+                        msg += '<br/>{{ lang._("Auto-selected:") }} <b>' + data.auto_selected + '</b>';
+                    }
                     BootstrapDialog.alert({type: BootstrapDialog.TYPE_SUCCESS, message: msg});
                     $("#import_uris_text").val('');
-                    $('#{{formGridServer["table_id"]}}').bootgrid('reload');
+                    $(gridId).bootgrid('reload');
+                    markGeneralDirty();
                 } else {
                     BootstrapDialog.alert('{{ lang._("Import failed: ") }}' + (data.message || 'unknown error'));
                 }
@@ -77,7 +97,8 @@
         var logTimer = null;
         var allowedHashes = ['#servers', '#general', '#import', '#log'];
         $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
-            if ($(e.target).attr('href') === '#log') {
+            var tab = $(e.target).attr('href');
+            if (tab === '#log') {
                 refreshLog();
                 if (logTimer) {
                     clearInterval(logTimer);
@@ -89,10 +110,12 @@
                     logTimer = null;
                 }
             }
-            if ($(e.target).attr('href') === '#servers') {
-                $('#{{formGridServer["table_id"]}}').bootgrid('reload');
+            if (tab === '#servers') {
+                $(gridId).bootgrid('reload');
             }
-            var tab = $(e.target).attr('href');
+            if (tab === '#general' && generalDirty) {
+                refreshGeneralForm();
+            }
             if (tab === '#servers' || tab === '#import' || tab === '#log') {
                 $('#reconfigureAct').closest('.content-box').hide();
             } else {
