@@ -24,6 +24,10 @@ done
 cd /tmp
 rm -rf xproxy-main xproxy.tar.gz
 
+echo "==> Removing hev-socks5-tunnel..."
+rm -f /usr/local/bin/hev-socks5-tunnel
+rm -f /usr/local/etc/xproxy/hev-socks5-tunnel.yml
+
 echo "==> Restarting configd..."
 service configd restart
 

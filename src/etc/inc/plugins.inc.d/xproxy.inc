@@ -85,8 +85,8 @@ function xproxy_policy_route_enabled()
     if ($ret !== 0) {
         return false;
     }
-    /* tun2socks must be alive when installed: route-to tun9 is useless otherwise. */
-    $tunBin = '/usr/local/bin/tun2socks';
+    /* hev-socks5-tunnel must be alive when installed: route-to tun9 is useless otherwise. */
+    $tunBin = '/usr/local/bin/hev-socks5-tunnel';
     if (is_file($tunBin)) {
         $tunPidFile = '/var/run/xproxy_tun2socks.pid';
         if (!file_exists($tunPidFile)) {
@@ -150,6 +150,45 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
                 'descr' => 'Xproxy: allow access to this firewall (' . $ifent . ')',
                 'from' => $ifent,
                 'to' => '(self)',
+                'direction' => 'in',
+            ),
+            $defaults
+        );
+
+        /* Bypass: let traffic to local/private networks pass directly
+         * without entering the tunnel, so LAN-to-LAN transfers (Samba,
+         * NFS, etc.) are not degraded by the tunnel round-trip. */
+        $mdl_bypass = new \OPNsense\Xproxy\Xproxy();
+        $bypassRaw = (string)$mdl_bypass->general->bypass_ips;
+        if (!empty($bypassRaw)) {
+            foreach (explode(',', $bypassRaw) as $cidr) {
+                $cidr = trim($cidr);
+                if (empty($cidr)) {
+                    continue;
+                }
+                $fw->registerFilterRule(
+                    175,
+                    array(
+                        'interface' => $ifent,
+                        'descr' => 'Xproxy: bypass tunnel for ' . $cidr . ' (' . $ifent . ')',
+                        'from' => $ifent,
+                        'to' => $cidr,
+                        'direction' => 'in',
+                    ),
+                    $defaults
+                );
+            }
+        }
+
+        /* Also bypass traffic destined for the same interface network
+         * in case it is not covered by the bypass list above. */
+        $fw->registerFilterRule(
+            176,
+            array(
+                'interface' => $ifent,
+                'descr' => 'Xproxy: bypass tunnel for same-subnet (' . $ifent . ')',
+                'from' => $ifent,
+                'to' => $ifent,
                 'direction' => 'in',
             ),
             $defaults

@@ -43,7 +43,7 @@ done
 
 chmod +x "${PREFIX}/opnsense/scripts/xproxy/"*.py "${PREFIX}/opnsense/scripts/xproxy/"*.sh "${PREFIX}/opnsense/scripts/xproxy/"*.php 2>/dev/null || true
 
-echo "==> Installing tun2socks..."
+echo "==> Installing hev-socks5-tunnel..."
 "${PREFIX}/opnsense/scripts/xproxy/setup.sh"
 
 cd /tmp

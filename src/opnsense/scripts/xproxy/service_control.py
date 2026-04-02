@@ -3,7 +3,7 @@
 """
 Xproxy service lifecycle manager.
 Reads OPNsense config.xml, generates xray-core config, manages
-xray-core and tun2socks processes, and configures the TUN interface.
+xray-core and hev-socks5-tunnel processes, and configures the TUN interface.
 
 Usage: service_control.py <start|stop|restart|reconfigure|status>
 """
@@ -20,9 +20,10 @@ import xml.etree.ElementTree as ET
 
 CONFIG_XML = '/conf/config.xml'
 XRAY_BIN = '/usr/local/bin/xray'
-TUN2SOCKS_BIN = '/usr/local/bin/tun2socks'
+TUN2SOCKS_BIN = '/usr/local/bin/hev-socks5-tunnel'
 CONFIG_DIR = '/usr/local/etc/xproxy'
 XRAY_CONFIG = os.path.join(CONFIG_DIR, 'config.json')
+TUN2SOCKS_CONFIG = os.path.join(CONFIG_DIR, 'hev-socks5-tunnel.yml')
 XRAY_PID = '/var/run/xproxy_xray.pid'
 TUN2SOCKS_PID = '/var/run/xproxy_tun2socks.pid'
 LOG_FILE = '/var/log/xproxy.log'
@@ -174,30 +175,20 @@ def build_xray_config(cfg, server):
                 "outboundTag": "direct"
             })
 
-    # Xray's built-in DNS prevents a routing loop: without it,
-    # domainStrategy "IPIfNonMatch" resolves names through the tunnel,
-    # each lookup opens new connections, and sockets/FDs spiral until
-    # the kernel kills the process.  "AsIs" + explicit DNS servers
-    # breaks the cycle — proxy-server lookups go direct via 1.1.1.1,
-    # everything else is forwarded as-is without triggering resolution.
-    dns_servers = [
-        "1.1.1.1",
-        "8.8.8.8",
-        "localhost",
-    ]
-    addr = (server.get('address') or '').strip()
-    if addr:
-        try:
-            ipaddress.ip_address(addr)
-        except ValueError:
-            dns_servers.insert(0, {
-                "address": "1.1.1.1",
-                "domains": ["full:" + addr],
-            })
-
+    # Do NOT enable Xray "access" logging to this file: with transparent LAN
+    # routing every TCP flow writes a line — gigabit / busy LANs can generate
+    # millions of sync writes, saturating disk I/O and freezing the firewall.
+    # Errors only go to LOG_FILE; use UI log tab for diagnostics.
     config = {
         "log": {"loglevel": log_level, "error": LOG_FILE},
-        "dns": {"servers": dns_servers},
+        "dns": {
+            "servers": [
+                {"address": "1.1.1.1", "domains": ["full:v2ray.dasunnimantha.com"]},
+                "1.1.1.1",
+                "8.8.8.8",
+                "localhost"
+            ]
+        },
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {
@@ -371,6 +362,34 @@ def start_xray():
     log_error('xproxy: xray failed to start')
 
 
+def _write_tun2socks_config(cfg):
+    """Generate a YAML config for hev-socks5-tunnel."""
+    device = cfg.get('tun_device') or 'tun9'
+    address = (cfg.get('tun_address') or '10.255.0.1').strip()
+    mtu = cfg.get('tun_mtu', 1500)
+    socks_port = cfg['socks_port']
+    yml = (
+        "tunnel:\n"
+        "  name: %s\n"
+        "  mtu: 8500\n"
+        "  ipv4: %s\n"
+        "\n"
+        "socks5:\n"
+        "  port: %d\n"
+        "  address: 127.0.0.1\n"
+        "  udp: 'udp'\n"
+        "\n"
+        "misc:\n"
+        "  tcp-buffer-size: 65536\n"
+        "  udp-read-write-timeout: 30000\n"
+        "  log-file: stderr\n"
+        "  log-level: warn\n"
+    ) % (device, address, socks_port)
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(TUN2SOCKS_CONFIG, 'w') as f:
+        f.write(yml)
+
+
 def start_tun2socks(cfg):
     if is_running(TUN2SOCKS_PID):
         return
@@ -383,19 +402,14 @@ def start_tun2socks(cfg):
         capture_output=True, check=False
     )
 
-    socks_addr = '127.0.0.1:%d' % cfg['socks_port']
+    _write_tun2socks_config(cfg)
     cmd = [
         '/usr/sbin/daemon', '-c', '-f', '-p', TUN2SOCKS_PID,
-        TUN2SOCKS_BIN,
-        '-device', 'tun://' + device,
-        '-proxy', 'socks5://' + socks_addr,
-        '-tcp-rcvbuf', '32k',
-        '-tcp-sndbuf', '32k',
-        '-udp-timeout', '30s',
+        TUN2SOCKS_BIN, TUN2SOCKS_CONFIG,
     ]
 
     for attempt in range(3):
-        subprocess.run(cmd, env=_go_env(), check=False)
+        subprocess.run(cmd, check=False)
         for _ in range(20):
             time.sleep(0.5)
             if is_running(TUN2SOCKS_PID):
@@ -423,9 +437,8 @@ def configure_tun(cfg):
             return
     except ValueError:
         return
-    mtu = str(cfg['tun_mtu'])
     subprocess.run(
-        ['ifconfig', device, address, gateway, 'mtu', mtu, 'up'],
+        ['ifconfig', device, address, gateway, 'up'],
         check=False
     )
 
@@ -517,7 +530,7 @@ def do_status():
     if xray_up and tun_up:
         print("xproxy is running")
     elif xray_up:
-        print("xproxy is running (xray-core only, tun2socks not active)")
+        print("xproxy is running (xray-core only, tunnel not active)")
     else:
         print("xproxy is not running")
 
