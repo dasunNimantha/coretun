@@ -62,6 +62,10 @@ function xproxy_configure_do($verbose = false)
 
 function xproxy_policy_route_enabled()
 {
+    if (!file_exists('/var/run/xproxy_service.active')) {
+        return false;
+    }
+
     $mdl = new \OPNsense\Xproxy\Xproxy();
     if ((string)$mdl->general->enabled != '1') {
         return false;

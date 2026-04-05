@@ -72,4 +72,10 @@
         <type>text</type>
         <help>Comma-separated list of CIDRs to route directly (bypass proxy). RFC1918 ranges are included by default.</help>
     </field>
+    <field>
+        <id>xproxy.general.metrics_exporter</id>
+        <label>Prometheus Exporter</label>
+        <type>checkbox</type>
+        <help>Enable a Prometheus metrics exporter (port 9101) that exposes xray-core and tunnel statistics for monitoring with Grafana or similar tools.</help>
+    </field>
 </form>

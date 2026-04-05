@@ -28,6 +28,7 @@ HEV_CONFIG = os.path.join(CONFIG_DIR, 'hev-socks5-tunnel.yml')
 XRAY_PID = '/var/run/xproxy_xray.pid'
 HEV_PID = '/var/run/xproxy_hev.pid'
 LOCK_FILE = '/var/run/xproxy.lock'
+ACTIVE_FLAG = '/var/run/xproxy_service.active'
 LOG_FILE = '/var/log/xproxy.log'
 LOG_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
 
@@ -142,6 +143,7 @@ def read_config():
         'policy_route_lan': txt(general, 'policy_route_lan', '1'),
         'log_level': 'warning',
         'bypass_ips': txt(general, 'bypass_ips', '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8'),
+        'metrics_exporter': txt(general, 'metrics_exporter', '0'),
         'servers': [],
     }
 
@@ -766,22 +768,6 @@ def configure_tun(cfg):
 
 
 # ---------------------------------------------------------------------------
-# PF state flushing
-# ---------------------------------------------------------------------------
-
-def _flush_pf_states():
-    """Flush PF state table so connections re-route through the new tunnel.
-
-    Stale PF states from a previous tunnel session cause traffic to bypass
-    the new tunnel, leading to ISP IP leaking or broken routing.
-    """
-    subprocess.run(
-        ['pfctl', '-F', 'states'],
-        capture_output=True, check=False,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Stop / cleanup
 # ---------------------------------------------------------------------------
 
@@ -846,11 +832,8 @@ _SYSCTL_TUNABLES = {
 def _apply_sysctl_tuning():
     """Apply TCP buffer tuning at runtime (idempotent)."""
     subprocess.run(['kldload', 'cc_cdg'], capture_output=True, check=False)
-    for key, val in _SYSCTL_TUNABLES.items():
-        subprocess.run(
-            ['sysctl', '%s=%s' % (key, val)],
-            capture_output=True, check=False,
-        )
+    args = ['sysctl'] + ['%s=%s' % (k, v) for k, v in _SYSCTL_TUNABLES.items()]
+    subprocess.run(args, capture_output=True, check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -885,26 +868,139 @@ def do_start():
         if start_hev(cfg):
             configure_tun(cfg)
 
-    _flush_pf_states()
+    _set_active_flag()
     schedule_filter_reload()
+
+    if cfg.get('metrics_exporter', '0') == '1':
+        _start_exporter()
+    else:
+        _stop_exporter()
+
+
+def _set_active_flag():
+    """Create the runtime flag file indicating the service is up."""
+    try:
+        with open(ACTIVE_FLAG, 'w') as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pass
+
+
+def _clear_active_flag():
+    """Remove the runtime flag file."""
+    try:
+        os.unlink(ACTIVE_FLAG)
+    except OSError:
+        pass
+
+
+EXPORTER_PID = '/var/run/tunbridge_exporter.pid'
+
+
+def _start_exporter():
+    """Start the Prometheus exporter with auto-restart."""
+    exporter = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tunbridge_exporter.py')
+    if not os.path.isfile(exporter):
+        return
+    pid = read_pid(EXPORTER_PID)
+    if pid and _pid_running(pid):
+        return
+    subprocess.Popen(
+        ['/usr/sbin/daemon', '-r', '-p', EXPORTER_PID,
+         '/usr/local/bin/python3', exporter],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def _stop_exporter():
+    """Stop the Prometheus exporter if running."""
+    kill_pid(EXPORTER_PID, 'tunbridge_exporter')
 
 
 def do_stop():
     cfg = read_config()
     stop_services(cfg)
-    _flush_pf_states()
+    _stop_exporter()
+    _clear_active_flag()
     schedule_filter_reload()
 
 
 def do_reconfigure():
+    """Hot-reload: restart only xray-core, keep tunnel alive to minimise downtime."""
     cfg = read_config()
-    stop_services(cfg)
     _rotate_log()
-    if cfg and cfg['enabled'] == '1':
-        do_start()
-    else:
-        _flush_pf_states()
+
+    if cfg is None or cfg['enabled'] != '1':
+        stop_services(cfg)
+        _stop_exporter()
+        _clear_active_flag()
         schedule_filter_reload()
+        return
+
+    server = find_active_server(cfg)
+    if server is None:
+        log_error('xproxy: no server matches the active selection — '
+                  'go to General tab and select a server')
+        stop_services(cfg)
+        _stop_exporter()
+        _clear_active_flag()
+        schedule_filter_reload()
+        return
+
+    if not (server.get('address') or '').strip():
+        log_error('xproxy: active server has no address')
+        stop_services(cfg)
+        _stop_exporter()
+        _clear_active_flag()
+        schedule_filter_reload()
+        return
+
+    if server.get('protocol') not in SUPPORTED_PROTOCOLS:
+        log_error('xproxy: unsupported protocol %r' % (server.get('protocol'),))
+        stop_services(cfg)
+        _stop_exporter()
+        _clear_active_flag()
+        schedule_filter_reload()
+        return
+
+    _apply_sysctl_tuning()
+
+    xray_config = build_xray_config(cfg, server)
+    write_xray_config(xray_config)
+
+    kill_pid(XRAY_PID, 'xray')
+    _kill_orphans(XRAY_BIN)
+    if not start_xray():
+        return
+
+    policy_route = cfg.get('policy_route_lan', '1') != '0'
+    hev_running = is_running(HEV_PID, 'hev-socks5-tunnel')
+
+    if policy_route and os.path.isfile(HEV_BIN):
+        if not hev_running:
+            if start_hev(cfg):
+                configure_tun(cfg)
+        else:
+            configure_tun(cfg)
+    elif hev_running:
+        kill_pid(HEV_PID, 'hev-socks5-tunnel')
+        _kill_orphans('hev-socks5-tunnel')
+        device = (cfg.get('tun_device', 'tun9') or 'tun9')
+        if TUN_DEVICE_RE.match(device):
+            subprocess.run(
+                ['ifconfig', device, 'destroy'],
+                capture_output=True, check=False,
+            )
+
+    _set_active_flag()
+    schedule_filter_reload()
+
+    if cfg.get('metrics_exporter', '0') == '1':
+        _start_exporter()
+    else:
+        _stop_exporter()
 
 
 def do_status():

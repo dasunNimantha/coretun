@@ -38,6 +38,11 @@ class ServiceController extends ApiMutableServiceControllerBase
     protected static $internalServiceTemplate = 'OPNsense/Xproxy';
     protected static $internalServiceName = 'xproxy';
 
+    protected function reconfigureForceRestart()
+    {
+        return 0;
+    }
+
     public function logAction()
     {
         $backend = new Backend();
