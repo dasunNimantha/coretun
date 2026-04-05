@@ -84,6 +84,39 @@ The Active Server dropdown refreshes automatically when servers are added, delet
 
 TUN-related fields (Tunnel Interfaces, TUN Device, TUN Address, TUN Gateway, Bypass IPs) are hidden when "Route LAN through tunnel" is unchecked, keeping the UI clean for SOCKS-only setups.
 
+## Prometheus metrics
+
+When the "Prometheus Exporter" toggle is enabled, a metrics endpoint is available at `http://<firewall-ip>:9101/metrics`. All metrics use the `tunbridge_` prefix.
+
+### Process metrics (per xray-core and hev-socks5-tunnel)
+
+| Metric | Type | Description |
+|---|---|---|
+| `tunbridge_up{process="xray\|tunnel"}` | gauge | Whether the process is running (1=up, 0=down) |
+| `tunbridge_rss_bytes` | gauge | Resident set size in bytes |
+| `tunbridge_vsz_bytes` | gauge | Virtual memory size in bytes |
+| `tunbridge_cpu_percent` | gauge | Snapshot CPU usage percent |
+| `tunbridge_cpu_seconds_total` | counter | Cumulative CPU time in seconds |
+| `tunbridge_uptime_seconds` | gauge | Process uptime in seconds |
+
+### System memory
+
+| Metric | Type | Description |
+|---|---|---|
+| `tunbridge_system_memory_total_bytes` | gauge | Total physical memory |
+| `tunbridge_system_memory_free_bytes` | gauge | Free memory |
+| `tunbridge_system_memory_available_bytes` | gauge | Free + inactive (available for use) |
+| `tunbridge_system_memory_active_bytes` | gauge | Active memory |
+| `tunbridge_system_memory_inactive_bytes` | gauge | Inactive/cached pages |
+| `tunbridge_system_memory_wired_bytes` | gauge | Wired (non-pageable) memory |
+
+### Tunnel traffic
+
+| Metric | Type | Description |
+|---|---|---|
+| `tunbridge_tunnel_bytes_total{direction="rx\|tx"}` | counter | Bytes through TUN interface |
+| `tunbridge_tunnel_packets_total{direction="rx\|tx"}` | counter | Packets through TUN interface |
+
 ## Performance tuning
 
 The plugin ships TCP tuning via `/usr/local/etc/sysctl.d/xproxy.conf`:
