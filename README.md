@@ -13,9 +13,11 @@ When enabled, LAN traffic is routed through a VLESS, VMess, Shadowsocks, or Troj
 - Policy-based routing with dynamic firewall rules — rules are only active while the service is running
 - Context-aware server dialog — fields shown/hidden based on selected protocol, security, and transport
 - Multiple server profiles with quick switching and auto-select on add/import/delete
+- Near-zero downtime reconfigure — Apply restarts only xray-core while the tunnel stays alive (<1s vs ~10s)
 - Hardened process lifecycle — file locking, PID verification, orphan cleanup, crash recovery
 - Optimized xray config — sniffing with routeOnly, connection policy tuning, TCP Fast Open, DNS caching
 - TCP buffer and congestion control tuning via `sysctl.d` for high-throughput proxy workloads
+- Optional Prometheus metrics exporter (port 9101) for Grafana monitoring
 - Service log viewer with smart auto-scroll
 
 ## How it works
@@ -73,7 +75,7 @@ fetch -o - https://raw.githubusercontent.com/dasunNimantha/xproxy/main/uninstall
 
 The plugin adds **VPN > Xproxy** to the OPNsense sidebar with four tabs:
 
-- **General** — Enable/disable the service, select active server, toggle transparent routing, choose which interfaces to tunnel
+- **General** — Enable/disable the service, select active server, toggle transparent routing, choose which interfaces to tunnel, optional Prometheus exporter
 - **Servers** — View and manage server profiles (shows protocol, address, port, security at a glance)
 - **Import** — Paste proxy URIs to batch-import server configurations (with parse error reporting)
 - **Log** — Live service log viewer with smart auto-scroll (won't jump to bottom while you're reading)
