@@ -62,8 +62,17 @@ function xproxy_configure_do($verbose = false)
 
 function xproxy_policy_route_enabled()
 {
-    if (!file_exists('/var/run/xproxy_service.active')) {
-        return false;
+    $service_active = file_exists('/var/run/xproxy_service.active');
+    if (!$service_active) {
+        /* Fallback: check if xray is actually running (covers boot race). */
+        $pidfile = '/var/run/xproxy_xray.pid';
+        if (!file_exists($pidfile)) {
+            return false;
+        }
+        $pid = (int)trim(@file_get_contents($pidfile));
+        if ($pid <= 0 || !posix_kill($pid, 0)) {
+            return false;
+        }
     }
 
     $mdl = new \OPNsense\Xproxy\Xproxy();

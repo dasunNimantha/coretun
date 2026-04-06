@@ -882,8 +882,8 @@ def _set_active_flag():
     try:
         with open(ACTIVE_FLAG, 'w') as f:
             f.write(str(os.getpid()))
-    except OSError:
-        pass
+    except OSError as e:
+        log_error('xproxy: failed to create active flag: %s' % e)
 
 
 def _clear_active_flag():
