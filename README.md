@@ -117,6 +117,10 @@ When the "Prometheus Exporter" toggle is enabled, a metrics endpoint is availabl
 | `tunbridge_tunnel_bytes_total{direction="rx\|tx"}` | counter | Bytes through TUN interface |
 | `tunbridge_tunnel_packets_total{direction="rx\|tx"}` | counter | Packets through TUN interface |
 
+## Server compatibility
+
+The OPNsense `xray-core` package tracks FreeBSD ports, which can lag behind upstream releases. If your server runs a newer Xray version (e.g. 26.x via 3x-ui), features like `testseed` may silently break the Reality handshake with the older client. Keep the server-side Xray version aligned with the OPNsense package, or use a 3x-ui release that bundles the same version (e.g. 3x-ui v2.8.7 ships Xray 25.12.8).
+
 ## Performance tuning
 
 The plugin ships TCP tuning via `/usr/local/etc/sysctl.d/xproxy.conf`:
