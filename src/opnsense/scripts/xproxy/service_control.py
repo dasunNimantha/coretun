@@ -796,7 +796,7 @@ def stop_services(cfg):
 # Filter reload (detached to avoid configd deadlock)
 # ---------------------------------------------------------------------------
 
-def schedule_filter_reload():
+def schedule_filter_reload(delayed=False):
     """Spawn a detached filter reload that runs after this configd action exits.
 
     Calling ``configctl filter reload`` directly inside a configd action
@@ -804,6 +804,10 @@ def schedule_filter_reload():
     waits for the action to finish while the action waits for configd to
     process the filter reload).  By spawning the process detached, it
     executes after the current action returns and configd is free.
+
+    When *delayed* is True, a second reload is scheduled ~5s later to
+    win the boot/upgrade race where OPNsense reloads filters before
+    the service is fully up.
     """
     subprocess.Popen(
         ['/usr/local/sbin/configctl', 'filter', 'reload'],
@@ -812,6 +816,14 @@ def schedule_filter_reload():
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )
+    if delayed:
+        subprocess.Popen(
+            ['/bin/sh', '-c', 'sleep 5; /usr/local/sbin/configctl filter reload'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -869,7 +881,7 @@ def do_start():
             configure_tun(cfg)
 
     _set_active_flag()
-    schedule_filter_reload()
+    schedule_filter_reload(delayed=True)
 
     if cfg.get('metrics_exporter', '0') == '1':
         _start_exporter()
