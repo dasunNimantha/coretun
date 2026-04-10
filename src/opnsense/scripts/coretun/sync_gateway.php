@@ -28,7 +28,7 @@
  */
 
 /**
- * Create/remove optional interface xproxytun + gateway XPROXY_TUN for policy routing.
+ * Create/remove optional interface coretun + gateway CORETUN_TUN for policy routing.
  * Uses a single Config::save() to avoid re-entrancy / lock contention from chained saves.
  */
 
@@ -36,18 +36,18 @@
 
 use OPNsense\Core\Config;
 use OPNsense\Routing\Gateways;
-use OPNsense\Xproxy\Xproxy;
+use OPNsense\Coretun\Coretun;
 
-const XPROXY_IFKEY = 'xproxytun';
-const XPROXY_GWNAME = 'XPROXY_TUN';
-const XPROXY_MARK = 'Xproxy (plugin)';
+const CORETUN_IFKEY = 'coretun';
+const CORETUN_GWNAME = 'CORETUN_TUN';
+const CORETUN_MARK = 'Coretun (plugin)';
 
-function xproxy_remove_gateway_mvc(): void
+function coretun_remove_gateway_mvc(): void
 {
     $mdl = new Gateways();
     $uuid = null;
     foreach ($mdl->gateway_item->iterateItems() as $item) {
-        if ((string)$item->name === XPROXY_GWNAME) {
+        if ((string)$item->name === CORETUN_GWNAME) {
             $uuid = (string)$item->getAttributes()['uuid'];
             break;
         }
@@ -58,33 +58,33 @@ function xproxy_remove_gateway_mvc(): void
     }
 }
 
-function xproxy_disable_interface_xml(): void
+function coretun_disable_interface_xml(): void
 {
     $cfg = Config::getInstance()->object();
-    if (empty($cfg->interfaces->{XPROXY_IFKEY})) {
+    if (empty($cfg->interfaces->{CORETUN_IFKEY})) {
         return;
     }
-    $cfg->interfaces->{XPROXY_IFKEY}->enable = '0';
+    $cfg->interfaces->{CORETUN_IFKEY}->enable = '0';
 }
 
-function xproxy_ensure_interface_xml(string $tunDev): void
+function coretun_ensure_interface_xml(string $tunDev): void
 {
     $cfg = Config::getInstance()->object();
     if (empty($cfg->interfaces)) {
         return;
     }
-    $ifn = XPROXY_IFKEY;
+    $ifn = CORETUN_IFKEY;
     if (empty($cfg->interfaces->$ifn)) {
         $node = $cfg->interfaces->addChild($ifn);
         $node->addChild('enable', '1');
         $node->addChild('if', $tunDev);
-        $node->addChild('descr', XPROXY_MARK);
+        $node->addChild('descr', CORETUN_MARK);
         $node->addChild('ipaddr', 'none');
     } else {
         $cfg->interfaces->$ifn->enable = '1';
         $cfg->interfaces->$ifn->if = $tunDev;
         if (empty((string)$cfg->interfaces->$ifn->descr)) {
-            $cfg->interfaces->$ifn->descr = XPROXY_MARK;
+            $cfg->interfaces->$ifn->descr = CORETUN_MARK;
         }
         if (empty((string)$cfg->interfaces->$ifn->ipaddr)) {
             $cfg->interfaces->$ifn->ipaddr = 'none';
@@ -92,22 +92,22 @@ function xproxy_ensure_interface_xml(string $tunDev): void
     }
 }
 
-function xproxy_ensure_gateway_mvc(string $tunGw): void
+function coretun_ensure_gateway_mvc(string $tunGw): void
 {
     $mdl = new Gateways();
     $uuid = null;
     foreach ($mdl->gateway_item->iterateItems() as $item) {
-        if ((string)$item->name === XPROXY_GWNAME) {
+        if ((string)$item->name === CORETUN_GWNAME) {
             $uuid = (string)$item->getAttributes()['uuid'];
             break;
         }
     }
     $fields = [
-        'name' => XPROXY_GWNAME,
-        'interface' => XPROXY_IFKEY,
+        'name' => CORETUN_GWNAME,
+        'interface' => CORETUN_IFKEY,
         'ipprotocol' => 'inet',
         'gateway' => $tunGw,
-        'descr' => XPROXY_MARK,
+        'descr' => CORETUN_MARK,
         'defaultgw' => '0',
         'monitor_disable' => '1',
         'priority' => '255',
@@ -116,32 +116,32 @@ function xproxy_ensure_gateway_mvc(string $tunGw): void
     $mdl->serializeToConfig();
 }
 
-$xp = new Xproxy();
-$enabled = (string)$xp->general->enabled === '1';
+$mdl = new Coretun();
+$enabled = (string)$mdl->general->enabled === '1';
 /* Default on when unset (older configs): only explicit "0" disables */
-$policy = (string)$xp->general->policy_route_lan !== '0';
-$tunDev = (string)$xp->general->tun_device;
+$policy = (string)$mdl->general->policy_route_lan !== '0';
+$tunDev = (string)$mdl->general->tun_device;
 if ($tunDev === '') {
     $tunDev = 'tun9';
 }
-$tunGw = (string)$xp->general->tun_gateway;
+$tunGw = (string)$mdl->general->tun_gateway;
 if ($tunGw === '') {
     $tunGw = '10.255.0.2';
 }
 
 if (!$enabled || !$policy) {
-    xproxy_remove_gateway_mvc();
-    xproxy_disable_interface_xml();
+    coretun_remove_gateway_mvc();
+    coretun_disable_interface_xml();
     Config::getInstance()->save();
     exit(0);
 }
 
 if (!preg_match('/^tun[0-9]{1,3}$/', $tunDev) || filter_var($tunGw, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
-    syslog(LOG_ERR, 'xproxy sync_gateway: invalid tun device or gateway, aborting gateway sync');
+    syslog(LOG_ERR, 'coretun sync_gateway: invalid tun device or gateway, aborting gateway sync');
     exit(1);
 }
 
-xproxy_ensure_interface_xml($tunDev);
-xproxy_ensure_gateway_mvc($tunGw);
+coretun_ensure_interface_xml($tunDev);
+coretun_ensure_gateway_mvc($tunGw);
 Config::getInstance()->save();
 exit(0);

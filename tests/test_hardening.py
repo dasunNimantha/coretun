@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                '..', 'src', 'opnsense', 'scripts', 'xproxy'))
+                                '..', 'src', 'opnsense', 'scripts', 'coretun'))
 
 import service_control
 from service_control import (
@@ -162,7 +162,7 @@ class TestWriteHevConfig(unittest.TestCase):
         self._orig_hev_pid = service_control.HEV_PID
         service_control.CONFIG_DIR = self.tmpdir
         service_control.HEV_CONFIG = os.path.join(self.tmpdir, 'hev.yml')
-        service_control.HEV_PID = '/var/run/xproxy_hev.pid'
+        service_control.HEV_PID = '/var/run/coretun_hev.pid'
 
     def tearDown(self):
         service_control.CONFIG_DIR = self._orig_config_dir
@@ -220,7 +220,7 @@ class TestWriteHevConfig(unittest.TestCase):
         _write_hev_config(cfg)
         with open(service_control.HEV_CONFIG) as f:
             content = f.read()
-        self.assertIn('pid-file: /var/run/xproxy_hev.pid', content)
+        self.assertIn('pid-file: /var/run/coretun_hev.pid', content)
 
     def test_ipv4_address(self):
         cfg = _base_cfg(tun_address='10.200.0.1')
@@ -310,7 +310,7 @@ class TestLogRotation(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self._orig_log_file = service_control.LOG_FILE
         self._orig_max_bytes = service_control.LOG_MAX_BYTES
-        service_control.LOG_FILE = os.path.join(self.tmpdir, 'xproxy.log')
+        service_control.LOG_FILE = os.path.join(self.tmpdir, 'coretun.log')
 
     def tearDown(self):
         service_control.LOG_FILE = self._orig_log_file
@@ -366,9 +366,9 @@ class TestReadConfigEdgeCases(unittest.TestCase):
 
     def test_missing_general_returns_none(self):
         xml = """<?xml version="1.0"?>
-        <opnsense><OPNsense><xproxy>
+        <opnsense><OPNsense><coretun>
             <servers></servers>
-        </xproxy></OPNsense></opnsense>"""
+        </coretun></OPNsense></opnsense>"""
         original = service_control.CONFIG_XML
         path = self._write_config(xml)
         try:
@@ -380,7 +380,7 @@ class TestReadConfigEdgeCases(unittest.TestCase):
 
     def test_empty_server_fields_use_defaults(self):
         xml = """<?xml version="1.0"?>
-        <opnsense><OPNsense><xproxy>
+        <opnsense><OPNsense><coretun>
             <general>
                 <enabled>1</enabled>
                 <active_server>u1</active_server>
@@ -415,7 +415,7 @@ class TestReadConfigEdgeCases(unittest.TestCase):
                     <reality_short_id></reality_short_id>
                 </server>
             </servers>
-        </xproxy></OPNsense></opnsense>"""
+        </coretun></OPNsense></opnsense>"""
         original = service_control.CONFIG_XML
         path = self._write_config(xml)
         try:
@@ -435,14 +435,14 @@ class TestReadConfigEdgeCases(unittest.TestCase):
 
     def test_invalid_port_uses_default(self):
         xml = """<?xml version="1.0"?>
-        <opnsense><OPNsense><xproxy>
+        <opnsense><OPNsense><coretun>
             <general>
                 <enabled>1</enabled>
                 <active_server>u1</active_server>
                 <socks_port>99999</socks_port>
                 <http_port>-5</http_port>
             </general>
-        </xproxy></OPNsense></opnsense>"""
+        </coretun></OPNsense></opnsense>"""
         original = service_control.CONFIG_XML
         path = self._write_config(xml)
         try:
@@ -456,7 +456,7 @@ class TestReadConfigEdgeCases(unittest.TestCase):
 
     def test_non_server_children_ignored(self):
         xml = """<?xml version="1.0"?>
-        <opnsense><OPNsense><xproxy>
+        <opnsense><OPNsense><coretun>
             <general><enabled>0</enabled></general>
             <servers>
                 <notaserver><protocol>vless</protocol></notaserver>
@@ -466,7 +466,7 @@ class TestReadConfigEdgeCases(unittest.TestCase):
                     <address>host</address>
                 </server>
             </servers>
-        </xproxy></OPNsense></opnsense>"""
+        </coretun></OPNsense></opnsense>"""
         original = service_control.CONFIG_XML
         path = self._write_config(xml)
         try:
@@ -564,10 +564,10 @@ class TestSysctlTunables(unittest.TestCase):
 class TestConstants(unittest.TestCase):
 
     def test_hev_pid_uses_new_name(self):
-        self.assertEqual(service_control.HEV_PID, '/var/run/xproxy_hev.pid')
+        self.assertEqual(service_control.HEV_PID, '/var/run/coretun_hev.pid')
 
     def test_lock_file_exists(self):
-        self.assertEqual(service_control.LOCK_FILE, '/var/run/xproxy.lock')
+        self.assertEqual(service_control.LOCK_FILE, '/var/run/coretun.lock')
 
     def test_log_max_bytes(self):
         self.assertEqual(service_control.LOG_MAX_BYTES, 2 * 1024 * 1024)

@@ -26,46 +26,46 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-function xproxy_configure()
+function coretun_configure()
 {
     return array(
-        'bootup' => array('xproxy_configure_do')
+        'bootup' => array('coretun_configure_do')
     );
 }
 
-function xproxy_sync_gateway_config()
+function coretun_sync_gateway_config()
 {
-    $script = '/usr/local/opnsense/scripts/xproxy/sync_gateway.php';
+    $script = '/usr/local/opnsense/scripts/coretun/sync_gateway.php';
     if (is_file($script)) {
         exec('/usr/local/bin/php ' . escapeshellarg($script) . ' 2>/dev/null');
     }
 }
 
-function xproxy_configure_do($verbose = false)
+function coretun_configure_do($verbose = false)
 {
-    xproxy_sync_gateway_config();
+    coretun_sync_gateway_config();
 
-    $mdl = new \OPNsense\Xproxy\Xproxy();
+    $mdl = new \OPNsense\Coretun\Coretun();
     if ((string)$mdl->general->enabled == '1') {
         if ($verbose) {
-            echo 'Starting Xproxy...';
+            echo 'Starting Coretun...';
         }
-        configd_run('xproxy setup');
-        configd_run('template reload OPNsense/Xproxy');
-        configd_run('xproxy start');
+        configd_run('coretun setup');
+        configd_run('template reload OPNsense/Coretun');
+        configd_run('coretun start');
         configd_run('filter reload');
     } else {
-        configd_run('xproxy stop');
+        configd_run('coretun stop');
         configd_run('filter reload');
     }
 }
 
-function xproxy_policy_route_enabled()
+function coretun_policy_route_enabled()
 {
-    $service_active = file_exists('/var/run/xproxy_service.active');
+    $service_active = file_exists('/var/run/coretun_service.active');
     if (!$service_active) {
         /* Fallback: check if xray is actually running (covers boot race). */
-        $pidfile = '/var/run/xproxy_xray.pid';
+        $pidfile = '/var/run/coretun_xray.pid';
         if (!file_exists($pidfile)) {
             return false;
         }
@@ -75,7 +75,7 @@ function xproxy_policy_route_enabled()
         }
     }
 
-    $mdl = new \OPNsense\Xproxy\Xproxy();
+    $mdl = new \OPNsense\Coretun\Coretun();
     if ((string)$mdl->general->enabled != '1') {
         return false;
     }
@@ -95,11 +95,11 @@ function xproxy_policy_route_enabled()
     return false;
 }
 
-function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
+function coretun_firewall(\OPNsense\Firewall\Plugin $fw)
 {
     global $config;
 
-    if (!xproxy_policy_route_enabled()) {
+    if (!coretun_policy_route_enabled()) {
         return;
     }
 
@@ -115,7 +115,7 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
         return;
     }
 
-    $mdl = new \OPNsense\Xproxy\Xproxy();
+    $mdl = new \OPNsense\Coretun\Coretun();
     $bypassRaw = (string)$mdl->general->bypass_ips;
     $bypassCidrs = array();
     if (!empty($bypassRaw)) {
@@ -145,7 +145,7 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
         if (!empty($iface['virtual'])) {
             continue;
         }
-        if ($ifent === 'wan' || $ifent === 'xproxytun') {
+        if ($ifent === 'wan' || $ifent === 'coretun' || $ifent === 'xproxytun') {
             continue;
         }
         if (!empty($selectedIfs) && !in_array($ifent, $selectedIfs)) {
@@ -157,7 +157,7 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
             150,
             array(
                 'interface' => $ifent,
-                'descr' => 'Xproxy: allow access to this firewall (' . $ifent . ')',
+                'descr' => 'Coretun: allow access to this firewall (' . $ifent . ')',
                 'from' => $ifent,
                 'to' => '(self)',
                 'direction' => 'in',
@@ -171,7 +171,7 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
                 175,
                 array(
                     'interface' => $ifent,
-                    'descr' => 'Xproxy: bypass tunnel for ' . $cidr . ' (' . $ifent . ')',
+                    'descr' => 'Coretun: bypass tunnel for ' . $cidr . ' (' . $ifent . ')',
                     'from' => $ifent,
                     'to' => $cidr,
                     'direction' => 'in',
@@ -185,7 +185,7 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
             176,
             array(
                 'interface' => $ifent,
-                'descr' => 'Xproxy: bypass tunnel for same-subnet (' . $ifent . ')',
+                'descr' => 'Coretun: bypass tunnel for same-subnet (' . $ifent . ')',
                 'from' => $ifent,
                 'to' => $ifent,
                 'direction' => 'in',
@@ -198,20 +198,20 @@ function xproxy_firewall(\OPNsense\Firewall\Plugin $fw)
             200,
             array(
                 'interface' => $ifent,
-                'descr' => 'Xproxy: route IPv4 via tunnel (' . $ifent . ')',
+                'descr' => 'Coretun: route IPv4 via tunnel (' . $ifent . ')',
                 'from' => $ifent,
                 'to' => 'any',
                 'direction' => 'in',
-                'gateway' => 'XPROXY_TUN',
+                'gateway' => 'CORETUN_TUN',
             ),
             $defaults
         );
     }
 }
 
-function xproxy_devices()
+function coretun_devices()
 {
-    $mdl = new \OPNsense\Xproxy\Xproxy();
+    $mdl = new \OPNsense\Coretun\Coretun();
     if ((string)$mdl->general->enabled != '1') {
         return array();
     }
@@ -222,20 +222,20 @@ function xproxy_devices()
     return array(array('pattern' => '^' . preg_quote($dev, '/') . '$', 'volatile' => true));
 }
 
-function xproxy_services()
+function coretun_services()
 {
     $services = array();
-    $mdl = new \OPNsense\Xproxy\Xproxy();
+    $mdl = new \OPNsense\Coretun\Coretun();
     if ((string)$mdl->general->enabled == '1') {
         $services[] = array(
-            'description' => gettext('Xproxy'),
+            'description' => gettext('Coretun'),
             'configd' => array(
-                'restart' => array('xproxy restart'),
-                'start' => array('xproxy start'),
-                'stop' => array('xproxy stop'),
+                'restart' => array('coretun restart'),
+                'start' => array('coretun start'),
+                'stop' => array('coretun stop'),
             ),
-            'name' => 'xproxy',
-            'pidfile' => '/var/run/xproxy_xray.pid',
+            'name' => 'coretun',
+            'pidfile' => '/var/run/coretun_xray.pid',
         );
     }
     return $services;

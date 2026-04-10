@@ -26,12 +26,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-namespace OPNsense\Xproxy\Api;
+namespace OPNsense\Coretun\Api;
 
 use OPNsense\Base\ApiControllerBase;
 use OPNsense\Core\Backend;
 use OPNsense\Core\Config;
-use OPNsense\Xproxy\Xproxy;
+use OPNsense\Coretun\Coretun;
 
 class ImportController extends ApiControllerBase
 {
@@ -41,7 +41,7 @@ class ImportController extends ApiControllerBase
      * @param array<int, array<string, mixed>> $servers
      * @return array{added: int, skipped: int}
      */
-    private function mergeServersIntoModel(Xproxy $mdl, array $servers): array
+    private function mergeServersIntoModel(Coretun $mdl, array $servers): array
     {
         $existing = [];
         foreach ($mdl->servers->server->iterateItems() as $item) {
@@ -101,7 +101,7 @@ class ImportController extends ApiControllerBase
                     $result["message"] = "Import payload too large (max 2 MiB).";
                     return $result;
                 }
-                $tmpFile = tempnam('/tmp', 'xproxy_import_');
+                $tmpFile = tempnam('/tmp', 'coretun_import_');
                 if ($tmpFile === false) {
                     $result["message"] = "Could not create temporary file.";
                     return $result;
@@ -110,13 +110,13 @@ class ImportController extends ApiControllerBase
                 try {
                     file_put_contents($tmpFile, $uris);
                     $backend = new Backend();
-                    $response = trim($backend->configdRun("xproxy import " . escapeshellarg($tmpFile)));
+                    $response = trim($backend->configdRun("coretun import " . escapeshellarg($tmpFile)));
                 } finally {
                     @unlink($tmpFile);
                 }
                 $parsed = json_decode($response, true);
                 if (is_array($parsed) && isset($parsed['servers']) && is_array($parsed['servers'])) {
-                    $mdl = new Xproxy();
+                    $mdl = new Coretun();
                     $merge = $this->mergeServersIntoModel($mdl, $parsed['servers']);
                     if ($merge['added'] > 0) {
                         if (empty((string)$mdl->general->active_server)) {

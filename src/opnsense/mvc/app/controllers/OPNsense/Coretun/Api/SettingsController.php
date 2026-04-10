@@ -26,10 +26,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-namespace OPNsense\Xproxy;
+namespace OPNsense\Coretun\Api;
 
-use OPNsense\Base\BaseModel;
+use OPNsense\Base\ApiMutableModelControllerBase;
 
-class Xproxy extends BaseModel
+class SettingsController extends ApiMutableModelControllerBase
 {
+    protected static $internalModelClass = 'OPNsense\Coretun\Coretun';
+    protected static $internalModelName = 'coretun';
 }

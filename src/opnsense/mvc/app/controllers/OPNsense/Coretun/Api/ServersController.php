@@ -26,14 +26,14 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-namespace OPNsense\Xproxy\Api;
+namespace OPNsense\Coretun\Api;
 
 use OPNsense\Base\ApiMutableModelControllerBase;
 
 class ServersController extends ApiMutableModelControllerBase
 {
-    protected static $internalModelName = 'xproxy';
-    protected static $internalModelClass = 'OPNsense\Xproxy\Xproxy';
+    protected static $internalModelName = 'coretun';
+    protected static $internalModelClass = 'OPNsense\Coretun\Coretun';
 
     public function searchItemAction()
     {

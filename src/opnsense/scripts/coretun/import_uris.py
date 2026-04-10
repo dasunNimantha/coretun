@@ -2,7 +2,7 @@
 
 """
 Parse proxy URI strings (vless://, vmess://, ss://, trojan://) into
-structured server definitions for the Xproxy OPNsense plugin.
+structured server definitions for the Coretun OPNsense plugin.
 
 Usage: import_uris.py <file_with_uris>
 Output: JSON on stdout with {"servers": [...], "errors": [...]}

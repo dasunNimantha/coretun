@@ -1,4 +1,4 @@
-Xproxy is a multi-protocol proxy client for OPNsense that manages
+Coretun is a multi-protocol proxy client for OPNsense that manages
 xray-core with support for VLESS, VMess, Shadowsocks, and Trojan
 protocols. It provides transparent proxying via hev-socks5-tunnel and
 supports importing server configurations from URIs and subscriptions.

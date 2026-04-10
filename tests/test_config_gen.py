@@ -5,7 +5,7 @@ import os
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                '..', 'src', 'opnsense', 'scripts', 'xproxy'))
+                                '..', 'src', 'opnsense', 'scripts', 'coretun'))
 
 from service_control import (
     build_xray_config, build_outbound, build_stream_settings, _safe_int,

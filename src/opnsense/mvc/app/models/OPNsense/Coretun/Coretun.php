@@ -26,15 +26,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-namespace OPNsense\Xproxy;
+namespace OPNsense\Coretun;
 
-class IndexController extends \OPNsense\Base\IndexController
+use OPNsense\Base\BaseModel;
+
+class Coretun extends BaseModel
 {
-    public function indexAction()
-    {
-        $this->view->formGeneral = $this->getForm("general");
-        $this->view->formDialogServer = $this->getForm("dialogServer");
-        $this->view->formGridServer = $this->getFormGrid("dialogServer");
-        $this->view->pick('OPNsense/Xproxy/index');
-    }
 }

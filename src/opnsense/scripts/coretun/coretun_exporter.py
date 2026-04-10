@@ -1,7 +1,7 @@
 #!/usr/local/bin/python3
 
 """
-Prometheus exporter for xproxy process and system metrics.
+Prometheus exporter for coretun process and system metrics.
 Exposes xray-core and hev-socks5-tunnel health, RSS, CPU, uptime,
 system memory, and tunnel interface traffic on port 9101.
 
@@ -15,8 +15,8 @@ import subprocess
 
 LISTEN_PORT = 9101
 
-XRAY_PID_FILE = '/var/run/xproxy_xray.pid'
-HEV_PID_FILE = '/var/run/xproxy_hev.pid'
+XRAY_PID_FILE = '/var/run/coretun_xray.pid'
+HEV_PID_FILE = '/var/run/coretun_hev.pid'
 TUN_DEVICE = 'tun9'
 
 
@@ -208,54 +208,54 @@ def generate_metrics():
     traffic = _tunnel_traffic(TUN_DEVICE)
 
     lines = [
-        '# HELP tunbridge_up Whether the process is running (1=up, 0=down)',
-        '# TYPE tunbridge_up gauge',
-        '# HELP tunbridge_rss_bytes Resident set size in bytes',
-        '# TYPE tunbridge_rss_bytes gauge',
-        '# HELP tunbridge_vsz_bytes Virtual memory size in bytes',
-        '# TYPE tunbridge_vsz_bytes gauge',
-        '# HELP tunbridge_cpu_percent Snapshot CPU usage percent',
-        '# TYPE tunbridge_cpu_percent gauge',
-        '# HELP tunbridge_cpu_seconds_total Cumulative CPU time in seconds',
-        '# TYPE tunbridge_cpu_seconds_total counter',
-        '# HELP tunbridge_uptime_seconds Process uptime in seconds',
-        '# TYPE tunbridge_uptime_seconds gauge',
+        '# HELP coretun_up Whether the process is running (1=up, 0=down)',
+        '# TYPE coretun_up gauge',
+        '# HELP coretun_rss_bytes Resident set size in bytes',
+        '# TYPE coretun_rss_bytes gauge',
+        '# HELP coretun_vsz_bytes Virtual memory size in bytes',
+        '# TYPE coretun_vsz_bytes gauge',
+        '# HELP coretun_cpu_percent Snapshot CPU usage percent',
+        '# TYPE coretun_cpu_percent gauge',
+        '# HELP coretun_cpu_seconds_total Cumulative CPU time in seconds',
+        '# TYPE coretun_cpu_seconds_total counter',
+        '# HELP coretun_uptime_seconds Process uptime in seconds',
+        '# TYPE coretun_uptime_seconds gauge',
     ]
     for label, m in [('xray', xray), ('tunnel', tunnel)]:
-        lines.append('tunbridge_up{process="%s"} %d' % (label, m['up']))
-        lines.append('tunbridge_rss_bytes{process="%s"} %d' % (label, m['rss']))
-        lines.append('tunbridge_vsz_bytes{process="%s"} %d' % (label, m['vsz']))
-        lines.append('tunbridge_cpu_percent{process="%s"} %.1f' % (label, m['cpu_pct']))
-        lines.append('tunbridge_cpu_seconds_total{process="%s"} %.2f' % (label, m['cpu_s']))
-        lines.append('tunbridge_uptime_seconds{process="%s"} %d' % (label, m['uptime']))
+        lines.append('coretun_up{process="%s"} %d' % (label, m['up']))
+        lines.append('coretun_rss_bytes{process="%s"} %d' % (label, m['rss']))
+        lines.append('coretun_vsz_bytes{process="%s"} %d' % (label, m['vsz']))
+        lines.append('coretun_cpu_percent{process="%s"} %.1f' % (label, m['cpu_pct']))
+        lines.append('coretun_cpu_seconds_total{process="%s"} %.2f' % (label, m['cpu_s']))
+        lines.append('coretun_uptime_seconds{process="%s"} %d' % (label, m['uptime']))
 
     lines += [
-        '# HELP tunbridge_system_memory_total_bytes Total system memory',
-        '# TYPE tunbridge_system_memory_total_bytes gauge',
-        '# HELP tunbridge_system_memory_free_bytes Free memory',
-        '# TYPE tunbridge_system_memory_free_bytes gauge',
-        '# HELP tunbridge_system_memory_available_bytes Free + inactive memory',
-        '# TYPE tunbridge_system_memory_available_bytes gauge',
-        '# HELP tunbridge_system_memory_inactive_bytes Inactive/cached pages',
-        '# TYPE tunbridge_system_memory_inactive_bytes gauge',
-        '# HELP tunbridge_system_memory_wired_bytes Wired (non-pageable) memory',
-        '# TYPE tunbridge_system_memory_wired_bytes gauge',
-        '# HELP tunbridge_system_memory_active_bytes Active memory',
-        '# TYPE tunbridge_system_memory_active_bytes gauge',
-        'tunbridge_system_memory_total_bytes %d' % mem['total'],
-        'tunbridge_system_memory_free_bytes %d' % mem['free'],
-        'tunbridge_system_memory_available_bytes %d' % mem['available'],
-        'tunbridge_system_memory_inactive_bytes %d' % mem['inactive'],
-        'tunbridge_system_memory_wired_bytes %d' % mem['wired'],
-        'tunbridge_system_memory_active_bytes %d' % mem['active'],
-        '# HELP tunbridge_tunnel_bytes_total Bytes through tunnel interface',
-        '# TYPE tunbridge_tunnel_bytes_total counter',
-        '# HELP tunbridge_tunnel_packets_total Packets through tunnel interface',
-        '# TYPE tunbridge_tunnel_packets_total counter',
-        'tunbridge_tunnel_bytes_total{direction="rx"} %d' % traffic['rx_bytes'],
-        'tunbridge_tunnel_bytes_total{direction="tx"} %d' % traffic['tx_bytes'],
-        'tunbridge_tunnel_packets_total{direction="rx"} %d' % traffic['rx_packets'],
-        'tunbridge_tunnel_packets_total{direction="tx"} %d' % traffic['tx_packets'],
+        '# HELP coretun_system_memory_total_bytes Total system memory',
+        '# TYPE coretun_system_memory_total_bytes gauge',
+        '# HELP coretun_system_memory_free_bytes Free memory',
+        '# TYPE coretun_system_memory_free_bytes gauge',
+        '# HELP coretun_system_memory_available_bytes Free + inactive memory',
+        '# TYPE coretun_system_memory_available_bytes gauge',
+        '# HELP coretun_system_memory_inactive_bytes Inactive/cached pages',
+        '# TYPE coretun_system_memory_inactive_bytes gauge',
+        '# HELP coretun_system_memory_wired_bytes Wired (non-pageable) memory',
+        '# TYPE coretun_system_memory_wired_bytes gauge',
+        '# HELP coretun_system_memory_active_bytes Active memory',
+        '# TYPE coretun_system_memory_active_bytes gauge',
+        'coretun_system_memory_total_bytes %d' % mem['total'],
+        'coretun_system_memory_free_bytes %d' % mem['free'],
+        'coretun_system_memory_available_bytes %d' % mem['available'],
+        'coretun_system_memory_inactive_bytes %d' % mem['inactive'],
+        'coretun_system_memory_wired_bytes %d' % mem['wired'],
+        'coretun_system_memory_active_bytes %d' % mem['active'],
+        '# HELP coretun_tunnel_bytes_total Bytes through tunnel interface',
+        '# TYPE coretun_tunnel_bytes_total counter',
+        '# HELP coretun_tunnel_packets_total Packets through tunnel interface',
+        '# TYPE coretun_tunnel_packets_total counter',
+        'coretun_tunnel_bytes_total{direction="rx"} %d' % traffic['rx_bytes'],
+        'coretun_tunnel_bytes_total{direction="tx"} %d' % traffic['tx_bytes'],
+        'coretun_tunnel_packets_total{direction="rx"} %d' % traffic['rx_packets'],
+        'coretun_tunnel_packets_total{direction="tx"} %d' % traffic['tx_packets'],
     ]
     return '\n'.join(lines) + '\n'
 

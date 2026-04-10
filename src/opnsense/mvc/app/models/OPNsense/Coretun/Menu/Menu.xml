@@ -1,0 +1,5 @@
+<menu>
+    <VPN>
+        <Coretun order="50" url="/ui/coretun/" VisibleName="Coretun" cssClass="fa fa-shield fa-fw"/>
+    </VPN>
+</menu>

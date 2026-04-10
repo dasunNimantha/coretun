@@ -1,7 +1,7 @@
 #!/usr/local/bin/python3
 
 """
-Xproxy service lifecycle manager.
+Coretun service lifecycle manager.
 Reads OPNsense config.xml, generates xray-core config, manages
 xray-core and hev-socks5-tunnel processes, and configures the TUN interface.
 
@@ -22,14 +22,14 @@ import fcntl
 CONFIG_XML = '/conf/config.xml'
 XRAY_BIN = '/usr/local/bin/xray'
 HEV_BIN = '/usr/local/bin/hev-socks5-tunnel'
-CONFIG_DIR = '/usr/local/etc/xproxy'
+CONFIG_DIR = '/usr/local/etc/coretun'
 XRAY_CONFIG = os.path.join(CONFIG_DIR, 'config.json')
 HEV_CONFIG = os.path.join(CONFIG_DIR, 'hev-socks5-tunnel.yml')
-XRAY_PID = '/var/run/xproxy_xray.pid'
-HEV_PID = '/var/run/xproxy_hev.pid'
-LOCK_FILE = '/var/run/xproxy.lock'
-ACTIVE_FLAG = '/var/run/xproxy_service.active'
-LOG_FILE = '/var/log/xproxy.log'
+XRAY_PID = '/var/run/coretun_xray.pid'
+HEV_PID = '/var/run/coretun_hev.pid'
+LOCK_FILE = '/var/run/coretun.lock'
+ACTIVE_FLAG = '/var/run/coretun_service.active'
+LOG_FILE = '/var/log/coretun.log'
 LOG_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
 
 TUN_DEVICE_RE = re.compile(r'^tun[0-9]{1,3}$')
@@ -49,7 +49,7 @@ def _acquire_lock():
         _lock_fd = open(LOCK_FILE, 'w')
         fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except (IOError, OSError):
-        log_error('xproxy: another instance is already running, waiting...')
+        log_error('coretun: another instance is already running, waiting...')
         try:
             fcntl.flock(_lock_fd, fcntl.LOCK_EX)
         except (IOError, OSError):
@@ -111,14 +111,14 @@ def _rotate_log():
 # ---------------------------------------------------------------------------
 
 def read_config():
-    """Read xproxy settings from OPNsense config.xml."""
+    """Read coretun settings from OPNsense config.xml."""
     try:
         tree = ET.parse(CONFIG_XML)
     except (ET.ParseError, OSError) as e:
-        log_error('xproxy: failed to parse config.xml: %s' % e)
+        log_error('coretun: failed to parse config.xml: %s' % e)
         return None
     root = tree.getroot()
-    xp = root.find('.//OPNsense/xproxy')
+    xp = root.find('.//OPNsense/coretun')
     if xp is None:
         return None
 
@@ -415,7 +415,7 @@ def write_xray_config(config):
             json.dump(config, f, indent=2)
         os.rename(tmp, XRAY_CONFIG)
     except OSError as e:
-        log_error('xproxy: failed to write xray config: %s' % e)
+        log_error('coretun: failed to write xray config: %s' % e)
         try:
             os.unlink(tmp)
         except OSError:
@@ -432,7 +432,7 @@ def _validate_xray_config():
         capture_output=True, timeout=10, check=False,
     )
     if r.returncode != 0:
-        log_error('xproxy: xray config validation failed: %s' %
+        log_error('coretun: xray config validation failed: %s' %
                   (r.stderr.decode('utf-8', errors='replace').strip()))
         return False
     return True
@@ -517,7 +517,7 @@ def kill_pid(pidfile, expected_name=None):
             _cleanup_stale_pid(pidfile)
             return
 
-    log_error('xproxy: PID %d did not exit after SIGTERM, sending SIGKILL' % pid)
+    log_error('coretun: PID %d did not exit after SIGTERM, sending SIGKILL' % pid)
     try:
         os.kill(pid, signal.SIGKILL)
     except OSError:
@@ -575,11 +575,11 @@ def start_xray():
         return True
 
     if not os.path.isfile(XRAY_BIN):
-        log_error('xproxy: xray binary not found at %s' % XRAY_BIN)
+        log_error('coretun: xray binary not found at %s' % XRAY_BIN)
         return False
 
     if not os.path.isfile(XRAY_CONFIG):
-        log_error('xproxy: xray config not found at %s' % XRAY_CONFIG)
+        log_error('coretun: xray config not found at %s' % XRAY_CONFIG)
         return False
 
     if not _validate_xray_config():
@@ -596,7 +596,7 @@ def start_xray():
         if is_running(XRAY_PID, 'xray'):
             return True
 
-    log_error('xproxy: xray failed to start')
+    log_error('coretun: xray failed to start')
     return False
 
 
@@ -639,7 +639,7 @@ def _write_hev_config(cfg):
             f.write(yml)
         os.rename(tmp, HEV_CONFIG)
     except OSError as e:
-        log_error('xproxy: failed to write hev config: %s' % e)
+        log_error('coretun: failed to write hev config: %s' % e)
         try:
             os.unlink(tmp)
         except OSError:
@@ -652,16 +652,16 @@ def start_hev(cfg):
         return True
 
     if not os.path.isfile(HEV_BIN):
-        log_error('xproxy: hev-socks5-tunnel binary not found at %s' % HEV_BIN)
+        log_error('coretun: hev-socks5-tunnel binary not found at %s' % HEV_BIN)
         return False
 
     device = cfg.get('tun_device') or 'tun9'
     if not TUN_DEVICE_RE.match(device):
-        log_error('xproxy: invalid TUN device name: %s' % device)
+        log_error('coretun: invalid TUN device name: %s' % device)
         return False
 
     # Also handle legacy PID file location
-    for stale_pid in [HEV_PID, '/var/run/xproxy_tun2socks.pid']:
+    for stale_pid in [HEV_PID, '/var/run/coretun_tun2socks.pid']:
         kill_pid(stale_pid, 'hev-socks5-tunnel')
 
     subprocess.run(
@@ -678,7 +678,7 @@ def start_hev(cfg):
             time.sleep(0.5)
             if is_running(HEV_PID, 'hev-socks5-tunnel'):
                 return True
-        log_error('xproxy: hev-socks5-tunnel attempt %d failed' % (attempt + 1))
+        log_error('coretun: hev-socks5-tunnel attempt %d failed' % (attempt + 1))
         kill_pid(HEV_PID, 'hev-socks5-tunnel')
         subprocess.run(
             ['ifconfig', device, 'destroy'],
@@ -687,7 +687,7 @@ def start_hev(cfg):
         if attempt < 2:
             time.sleep(2)
 
-    log_error('xproxy: hev-socks5-tunnel failed to start after 3 retries')
+    log_error('coretun: hev-socks5-tunnel failed to start after 3 retries')
     return False
 
 
@@ -723,7 +723,7 @@ def configure_tun(cfg):
     hev-socks5-tunnel creates the interface and sets the MTU, but on
     FreeBSD it does not assign an inet address.  We must wait for the
     device to appear, then configure local + gateway so OPNsense can
-    route through XPROXY_TUN.
+    route through CORETUN_TUN.
     """
     device = cfg.get('tun_device') or 'tun9'
     if not TUN_DEVICE_RE.match(device):
@@ -734,10 +734,10 @@ def configure_tun(cfg):
         a = ipaddress.ip_address(address)
         g = ipaddress.ip_address(gateway)
         if a.version != 4 or g.version != 4:
-            log_error('xproxy: TUN addresses must be IPv4')
+            log_error('coretun: TUN addresses must be IPv4')
             return False
     except ValueError:
-        log_error('xproxy: invalid TUN address=%s or gateway=%s' % (address, gateway))
+        log_error('coretun: invalid TUN address=%s or gateway=%s' % (address, gateway))
         return False
 
     for _ in range(20):
@@ -745,7 +745,7 @@ def configure_tun(cfg):
             break
         time.sleep(0.5)
     else:
-        log_error('xproxy: %s did not appear after 10s — cannot configure' % device)
+        log_error('coretun: %s did not appear after 10s — cannot configure' % device)
         return False
 
     if _tun_has_addr(device, address, gateway):
@@ -757,11 +757,11 @@ def configure_tun(cfg):
     )
     if r.returncode != 0:
         stderr = r.stderr.decode('utf-8', errors='replace').strip()
-        log_error('xproxy: ifconfig %s failed: %s' % (device, stderr))
+        log_error('coretun: ifconfig %s failed: %s' % (device, stderr))
         return False
 
     if not _tun_has_addr(device, address, gateway):
-        log_error('xproxy: %s address/gateway not assigned after ifconfig' % device)
+        log_error('coretun: %s address/gateway not assigned after ifconfig' % device)
         return False
 
     return True
@@ -775,7 +775,7 @@ def stop_services(cfg):
     """Stop hev-socks5-tunnel and xray, destroy TUN device, clean orphans."""
     kill_pid(HEV_PID, 'hev-socks5-tunnel')
     # Handle legacy PID file
-    legacy_pid = '/var/run/xproxy_tun2socks.pid'
+    legacy_pid = '/var/run/coretun_tun2socks.pid'
     if os.path.exists(legacy_pid):
         kill_pid(legacy_pid, 'hev-socks5-tunnel')
 
@@ -858,14 +858,14 @@ def do_start():
         return
     server = find_active_server(cfg)
     if server is None:
-        log_error('xproxy: no server matches the active selection — '
+        log_error('coretun: no server matches the active selection — '
                   'go to General tab and select a server')
         return
     if not (server.get('address') or '').strip():
-        log_error('xproxy: active server has no address')
+        log_error('coretun: active server has no address')
         return
     if server.get('protocol') not in SUPPORTED_PROTOCOLS:
-        log_error('xproxy: unsupported protocol %r' % (server.get('protocol'),))
+        log_error('coretun: unsupported protocol %r' % (server.get('protocol'),))
         return
 
     _apply_sysctl_tuning()
@@ -895,7 +895,7 @@ def _set_active_flag():
         with open(ACTIVE_FLAG, 'w') as f:
             f.write(str(os.getpid()))
     except OSError as e:
-        log_error('xproxy: failed to create active flag: %s' % e)
+        log_error('coretun: failed to create active flag: %s' % e)
 
 
 def _clear_active_flag():
@@ -906,12 +906,12 @@ def _clear_active_flag():
         pass
 
 
-EXPORTER_PID = '/var/run/tunbridge_exporter.pid'
+EXPORTER_PID = '/var/run/coretun_exporter.pid'
 
 
 def _start_exporter():
     """Start the Prometheus exporter with auto-restart."""
-    exporter = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tunbridge_exporter.py')
+    exporter = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'coretun_exporter.py')
     if not os.path.isfile(exporter):
         return
     pid = read_pid(EXPORTER_PID)
@@ -928,7 +928,7 @@ def _start_exporter():
 
 def _stop_exporter():
     """Stop the Prometheus exporter if running."""
-    kill_pid(EXPORTER_PID, 'tunbridge_exporter')
+    kill_pid(EXPORTER_PID, 'coretun_exporter')
 
 
 def do_stop():
@@ -953,7 +953,7 @@ def do_reconfigure():
 
     server = find_active_server(cfg)
     if server is None:
-        log_error('xproxy: no server matches the active selection — '
+        log_error('coretun: no server matches the active selection — '
                   'go to General tab and select a server')
         stop_services(cfg)
         _stop_exporter()
@@ -962,7 +962,7 @@ def do_reconfigure():
         return
 
     if not (server.get('address') or '').strip():
-        log_error('xproxy: active server has no address')
+        log_error('coretun: active server has no address')
         stop_services(cfg)
         _stop_exporter()
         _clear_active_flag()
@@ -970,7 +970,7 @@ def do_reconfigure():
         return
 
     if server.get('protocol') not in SUPPORTED_PROTOCOLS:
-        log_error('xproxy: unsupported protocol %r' % (server.get('protocol'),))
+        log_error('coretun: unsupported protocol %r' % (server.get('protocol'),))
         stop_services(cfg)
         _stop_exporter()
         _clear_active_flag()
@@ -1019,11 +1019,11 @@ def do_status():
     xray_up = is_running(XRAY_PID, 'xray')
     tun_up = is_running(HEV_PID, 'hev-socks5-tunnel')
     if xray_up and tun_up:
-        print("xproxy is running")
+        print("coretun is running")
     elif xray_up:
-        print("xproxy is running (xray-core only, tunnel not active)")
+        print("coretun is running (xray-core only, tunnel not active)")
     else:
-        print("xproxy is not running")
+        print("coretun is not running")
 
 
 def main():

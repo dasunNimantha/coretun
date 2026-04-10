@@ -7,7 +7,7 @@ set -e
 
 HEV_BIN="/usr/local/bin/hev-socks5-tunnel"
 HEV_REPO="heiher/hev-socks5-tunnel"
-VERSION_FILE="/usr/local/etc/xproxy/.hev-version"
+VERSION_FILE="/usr/local/etc/coretun/.hev-version"
 MAX_RETRIES=3
 RETRY_DELAY=3
 ARCH=$(uname -m)

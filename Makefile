@@ -1,4 +1,4 @@
-PLUGIN_NAME=		xproxy
+PLUGIN_NAME=		coretun
 PLUGIN_VERSION=		0.2
 PLUGIN_COMMENT=		Multi-protocol proxy client with transparent routing
 PLUGIN_DEPENDS=		xray-core

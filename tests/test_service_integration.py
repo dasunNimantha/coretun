@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                '..', 'src', 'opnsense', 'scripts', 'xproxy'))
+                                '..', 'src', 'opnsense', 'scripts', 'coretun'))
 
 from service_control import read_config, find_active_server, build_xray_config, _safe_int
 from import_uris import parse_uri
@@ -20,7 +20,7 @@ SAMPLE_CONFIG_XML = """\
 <?xml version="1.0"?>
 <opnsense>
   <OPNsense>
-    <xproxy>
+    <coretun>
       <general>
         <enabled>1</enabled>
         <active_server>uuid-1</active_server>
@@ -77,7 +77,7 @@ SAMPLE_CONFIG_XML = """\
           <reality_short_id></reality_short_id>
         </server>
       </servers>
-    </xproxy>
+    </coretun>
   </OPNsense>
 </opnsense>
 """
@@ -122,7 +122,7 @@ class TestReadConfig(unittest.TestCase):
             service_control.CONFIG_XML = original
             os.unlink(path)
 
-    def test_missing_xproxy_section(self):
+    def test_missing_coretun_section(self):
         import service_control
         original = service_control.CONFIG_XML
         path = self._write_config(EMPTY_CONFIG_XML)

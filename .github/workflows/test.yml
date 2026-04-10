@@ -44,16 +44,16 @@ jobs:
 
       - name: Check syntax (py_compile)
         run: |
-          python -m py_compile src/opnsense/scripts/xproxy/service_control.py
-          python -m py_compile src/opnsense/scripts/xproxy/import_uris.py
-          python -m py_compile src/opnsense/scripts/xproxy/show_log.py
-          python -m py_compile src/opnsense/scripts/xproxy/tunbridge_exporter.py
+          python -m py_compile src/opnsense/scripts/coretun/service_control.py
+          python -m py_compile src/opnsense/scripts/coretun/import_uris.py
+          python -m py_compile src/opnsense/scripts/coretun/show_log.py
+          python -m py_compile src/opnsense/scripts/coretun/coretun_exporter.py
 
       - name: Install flake8
         run: pip install flake8
 
       - name: Lint Python files
-        run: flake8 src/opnsense/scripts/xproxy/*.py --max-line-length=120 --count --show-source --statistics
+        run: flake8 src/opnsense/scripts/coretun/*.py --max-line-length=120 --count --show-source --statistics
 
   php-lint:
     name: PHP syntax check
@@ -91,7 +91,7 @@ jobs:
 
       - name: Check shell scripts with shellcheck
         run: |
-          shellcheck install.sh uninstall.sh src/opnsense/scripts/xproxy/setup.sh || true
+          shellcheck install.sh uninstall.sh src/opnsense/scripts/coretun/setup.sh || true
 
   conf-lint:
     name: Config file validation
@@ -104,7 +104,7 @@ jobs:
           python3 -c "
           import configparser, sys
           cp = configparser.ConfigParser()
-          cp.read('src/opnsense/service/conf/actions.d/actions_xproxy.conf')
+          cp.read('src/opnsense/service/conf/actions.d/actions_coretun.conf')
           sections = cp.sections()
           required = ['start', 'stop', 'restart', 'reconfigure', 'status']
           missing = [s for s in required if s not in sections]
@@ -140,7 +140,7 @@ jobs:
             python3 --version
             php -v
 
-            REPO="/home/runner/work/xproxy/xproxy"
+            REPO="/home/runner/work/coretun/coretun"
 
             echo "==> Python tests on FreeBSD"
             cd "$REPO"
@@ -158,13 +158,13 @@ jobs:
 
             echo "==> Shell script portability (/bin/sh)"
             for script in "$REPO/install.sh" "$REPO/uninstall.sh" \
-                          "$REPO/src/opnsense/scripts/xproxy/setup.sh"; do
+                          "$REPO/src/opnsense/scripts/coretun/setup.sh"; do
               echo "Checking $script"
               sh -n "$script"
             done
 
             echo "==> newsyslog.conf validation"
-            NEWSYSLOG="$REPO/src/usr/local/etc/newsyslog.conf.d/xproxy.conf"
+            NEWSYSLOG="$REPO/src/usr/local/etc/newsyslog.conf.d/coretun.conf"
             if [ -f "$NEWSYSLOG" ]; then
               awk '/^[^#]/ && NF < 5 { print "ERROR: bad line: "$0; exit 1 }' "$NEWSYSLOG"
               echo "newsyslog.conf OK"
@@ -180,10 +180,10 @@ jobs:
             done
             echo "Files installed to temp prefix:"
             find "$TMPPREFIX" -type f | head -20
-            test -f "$TMPPREFIX/opnsense/scripts/xproxy/service_control.py"
-            test -f "$TMPPREFIX/opnsense/scripts/xproxy/import_uris.py"
-            test -f "$TMPPREFIX/opnsense/service/conf/actions.d/actions_xproxy.conf"
-            test -f "$TMPPREFIX/etc/inc/plugins.inc.d/xproxy.inc"
+            test -f "$TMPPREFIX/opnsense/scripts/coretun/service_control.py"
+            test -f "$TMPPREFIX/opnsense/scripts/coretun/import_uris.py"
+            test -f "$TMPPREFIX/opnsense/service/conf/actions.d/actions_coretun.conf"
+            test -f "$TMPPREFIX/etc/inc/plugins.inc.d/coretun.inc"
             echo "All expected files present"
             rm -rf "$TMPPREFIX"
 

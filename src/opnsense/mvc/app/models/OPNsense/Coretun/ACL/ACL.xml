@@ -1,0 +1,9 @@
+<acl>
+    <page-coretun>
+        <name>VPN: Coretun</name>
+        <patterns>
+            <pattern>ui/coretun/*</pattern>
+            <pattern>api/coretun/*</pattern>
+        </patterns>
+    </page-coretun>
+</acl>

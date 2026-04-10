@@ -26,17 +26,17 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-namespace OPNsense\Xproxy\Api;
+namespace OPNsense\Coretun\Api;
 
 use OPNsense\Base\ApiMutableServiceControllerBase;
 use OPNsense\Core\Backend;
 
 class ServiceController extends ApiMutableServiceControllerBase
 {
-    protected static $internalServiceClass = '\OPNsense\Xproxy\Xproxy';
+    protected static $internalServiceClass = '\OPNsense\Coretun\Coretun';
     protected static $internalServiceEnabled = 'general.enabled';
-    protected static $internalServiceTemplate = 'OPNsense/Xproxy';
-    protected static $internalServiceName = 'xproxy';
+    protected static $internalServiceTemplate = 'OPNsense/Coretun';
+    protected static $internalServiceName = 'coretun';
 
     protected function reconfigureForceRestart()
     {
@@ -46,7 +46,7 @@ class ServiceController extends ApiMutableServiceControllerBase
     public function logAction()
     {
         $backend = new Backend();
-        $response = $backend->configdRun('xproxy log');
+        $response = $backend->configdRun('coretun log');
         return ['response' => $response];
     }
 }

@@ -19,17 +19,17 @@
 
 <script>
     $(document).ready(function() {
-        const data_get_map = {'frm_general_settings': "/api/xproxy/settings/get"};
+        const data_get_map = {'frm_general_settings': "/api/coretun/settings/get"};
         var gridId = "#{{formGridServer['table_id']}}";
         var generalDirty = true;
 
-        var excludeInterfaces = ['wan', 'lo0', 'xproxytun'];
+        var excludeInterfaces = ['wan', 'lo0', 'coretun'];
         var tunFields = [
             'route_interfaces', 'tun_device', 'tun_address', 'tun_gateway', 'bypass_ips'
         ];
 
         function filterTunnelInterfaces() {
-            var sel = $('#xproxy\\.general\\.route_interfaces');
+            var sel = $('#coretun\\.general\\.route_interfaces');
             sel.find('option').each(function() {
                 var val = $(this).val();
                 if (excludeInterfaces.indexOf(val) !== -1 || val.match(/^tun\d/)) {
@@ -41,9 +41,9 @@
         }
 
         function toggleTunFields() {
-            var checked = $('#xproxy\\.general\\.policy_route_lan').is(':checked');
+            var checked = $('#coretun\\.general\\.policy_route_lan').is(':checked');
             $.each(tunFields, function(_, fld) {
-                var row = $('#xproxy\\.general\\.' + fld).closest('tr');
+                var row = $('#coretun\\.general\\.' + fld).closest('tr');
                 if (checked) {
                     row.show();
                 } else {
@@ -59,7 +59,7 @@
                 filterTunnelInterfaces();
                 $('.selectpicker').selectpicker('refresh');
                 toggleTunFields();
-                $('#xproxy\\.general\\.policy_route_lan').off('change.tun').on('change.tun', toggleTunFields);
+                $('#coretun\\.general\\.policy_route_lan').off('change.tun').on('change.tun', toggleTunFields);
             });
         }
 
@@ -70,11 +70,11 @@
         refreshGeneralForm();
 
         $(gridId).UIBootgrid({
-            search: '/api/xproxy/servers/search_item',
-            get: '/api/xproxy/servers/get_item/',
-            set: '/api/xproxy/servers/set_item/',
-            add: '/api/xproxy/servers/add_item/',
-            del: '/api/xproxy/servers/del_item/',
+            search: '/api/coretun/servers/search_item',
+            get: '/api/coretun/servers/get_item/',
+            set: '/api/coretun/servers/set_item/',
+            add: '/api/coretun/servers/add_item/',
+            del: '/api/coretun/servers/del_item/',
         });
 
         $(gridId).on('loaded.rs.jquery.bootgrid', function() {
@@ -116,14 +116,14 @@
         $("#reconfigureAct").SimpleActionButton({
             onPreAction: function() {
                 const dfObj = new $.Deferred();
-                saveFormToEndpoint("/api/xproxy/settings/set", 'frm_general_settings', function() {
+                saveFormToEndpoint("/api/coretun/settings/set", 'frm_general_settings', function() {
                     dfObj.resolve();
                 });
                 return dfObj;
             }
         });
 
-        updateServiceControlUI('xproxy');
+        updateServiceControlUI('coretun');
 
         // Import tab
         var importRunning = false;
@@ -139,7 +139,7 @@
             importRunning = true;
             $("#importAct").prop('disabled', true);
             $("#importAct_progress").addClass("fa fa-spinner fa-pulse");
-            ajaxCall('/api/xproxy/import/uris', {uris: uris}, function(data, status) {
+            ajaxCall('/api/coretun/import/uris', {uris: uris}, function(data, status) {
                 $("#importAct_progress").removeClass("fa fa-spinner fa-pulse");
                 $("#importAct").prop('disabled', false);
                 importRunning = false;
@@ -214,14 +214,14 @@
         });
 
         function refreshLog() {
-            ajaxGet('/api/xproxy/service/log', {}, function(data, status) {
+            ajaxGet('/api/coretun/service/log', {}, function(data, status) {
                 if (status !== 'success') {
                     return;
                 }
                 if (data && data.response) {
-                    var el = document.getElementById('xproxy_log_output');
+                    var el = document.getElementById('coretun_log_output');
                     var atBottom = el && (el.scrollHeight - el.scrollTop - el.clientHeight < 30);
-                    $("#xproxy_log_output").text(data.response);
+                    $("#coretun_log_output").text(data.response);
                     if (el && atBottom) {
                         el.scrollTop = el.scrollHeight;
                     }
@@ -276,10 +276,10 @@
     </div>
     <div id="log" class="tab-pane fade in">
         <div class="col-md-12" style="padding-top: 15px;">
-            <pre id="xproxy_log_output" style="max-height: 500px; overflow-y: auto; font-size: 12px; background: #1e1e1e; color: #d4d4d4; padding: 10px;">{{ lang._('Loading...') }}</pre>
+            <pre id="coretun_log_output" style="max-height: 500px; overflow-y: auto; font-size: 12px; background: #1e1e1e; color: #d4d4d4; padding: 10px;">{{ lang._('Loading...') }}</pre>
         </div>
     </div>
 </div>
 
-{{ partial('layout_partials/base_apply_button', {'data_endpoint': '/api/xproxy/service/reconfigure', 'data_service_widget': 'xproxy'}) }}
+{{ partial('layout_partials/base_apply_button', {'data_endpoint': '/api/coretun/service/reconfigure', 'data_service_widget': 'coretun'}) }}
 {{ partial("layout_partials/base_dialog",['fields':formDialogServer,'id':formGridServer['edit_dialog_id'],'label':lang._('Edit Server')])}}

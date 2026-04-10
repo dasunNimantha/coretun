@@ -7,7 +7,7 @@ import base64
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                '..', 'src', 'opnsense', 'scripts', 'xproxy'))
+                                '..', 'src', 'opnsense', 'scripts', 'coretun'))
 
 from import_uris import parse_vless, parse_vmess, parse_shadowsocks, parse_trojan, parse_uri
 

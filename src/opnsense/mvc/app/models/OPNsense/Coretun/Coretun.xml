@@ -1,7 +1,7 @@
 <model>
-    <mount>//OPNsense/xproxy</mount>
+    <mount>//OPNsense/coretun</mount>
     <version>1.0.0</version>
-    <description>Xproxy multi-protocol proxy client</description>
+    <description>Coretun multi-protocol proxy client</description>
     <items>
         <general>
             <enabled type="BooleanField">
@@ -11,7 +11,7 @@
             <active_server type="ModelRelationField">
                 <Model>
                     <servers>
-                        <source>OPNsense.Xproxy.Xproxy</source>
+                        <source>OPNsense.Coretun.Coretun</source>
                         <items>servers.server</items>
                         <display>description</display>
                     </servers>

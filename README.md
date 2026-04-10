@@ -1,4 +1,4 @@
-# xproxy
+# coretun
 
 OPNsense plugin for Xray-core with transparent LAN routing.
 
@@ -24,7 +24,7 @@ When enabled, LAN traffic is routed through a VLESS, VMess, Shadowsocks, or Troj
 
 1. **Xray-core** connects to the remote proxy server and exposes a local SOCKS5 endpoint
 2. **hev-socks5-tunnel** creates a TUN interface (`tun9`) that routes traffic through the SOCKS5 endpoint
-3. The plugin registers a virtual interface (`xproxytun`) and gateway (`XPROXY_TUN`) in OPNsense
+3. The plugin registers a virtual interface (`coretun`) and gateway (`CORETUN_TUN`) in OPNsense
 4. Firewall rules route selected LAN interface traffic through the TUN gateway using OPNsense's `_firewall()` plugin hook
 5. When "Route LAN through tunnel" is disabled, only local SOCKS5/HTTP proxy is available — TUN and firewall rules are skipped
 
@@ -33,19 +33,19 @@ When enabled, LAN traffic is routed through a VLESS, VMess, Shadowsocks, or Troj
 | Package | Source | Status |
 |---|---|---|
 | xray-core | [security/xray-core](https://www.freshports.org/security/xray-core/) | Installed by `install.sh` or manual setup |
-| hev-socks5-tunnel | [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | Downloaded by `install.sh` / `xproxy setup` |
+| hev-socks5-tunnel | [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) | Downloaded by `install.sh` / `coretun setup` |
 
 ## Installation
 
 SSH into your OPNsense firewall and run:
 
 ```bash
-fetch -o - https://raw.githubusercontent.com/dasunNimantha/xproxy/main/install.sh | sh
+fetch -o - https://raw.githubusercontent.com/dasunNimantha/coretun/main/install.sh | sh
 ```
 
 The installer copies the plugin files, installs `xray-core`, downloads the `hev-socks5-tunnel` binary, and restarts `configd`.
 
-Then navigate to **VPN > Xproxy** in the web UI to configure.
+Then navigate to **VPN > Coretun** in the web UI to configure.
 
 ### Manual installation
 
@@ -53,27 +53,27 @@ Then navigate to **VPN > Xproxy** in the web UI to configure.
 pkg install -y xray-core
 
 cd /tmp
-fetch -o xproxy.tar.gz https://github.com/dasunNimantha/xproxy/archive/refs/heads/main.tar.gz
-tar xzf xproxy.tar.gz
-cd xproxy-main/src
+fetch -o coretun.tar.gz https://github.com/dasunNimantha/coretun/archive/refs/heads/main.tar.gz
+tar xzf coretun.tar.gz
+cd coretun-main/src
 find . -type f | while read FILE; do
   mkdir -p "$(dirname /usr/local/$FILE)"
   cp "$FILE" "/usr/local/$FILE"
 done
-chmod +x /usr/local/opnsense/scripts/xproxy/*.py /usr/local/opnsense/scripts/xproxy/*.sh /usr/local/opnsense/scripts/xproxy/*.php 2>/dev/null || true
-/usr/local/opnsense/scripts/xproxy/setup.sh
+chmod +x /usr/local/opnsense/scripts/coretun/*.py /usr/local/opnsense/scripts/coretun/*.sh /usr/local/opnsense/scripts/coretun/*.php 2>/dev/null || true
+/usr/local/opnsense/scripts/coretun/setup.sh
 service configd restart
 ```
 
 ### Uninstall
 
 ```bash
-fetch -o - https://raw.githubusercontent.com/dasunNimantha/xproxy/main/uninstall.sh | sh
+fetch -o - https://raw.githubusercontent.com/dasunNimantha/coretun/main/uninstall.sh | sh
 ```
 
 ## UI
 
-The plugin adds **VPN > Xproxy** to the OPNsense sidebar with four tabs:
+The plugin adds **VPN > Coretun** to the OPNsense sidebar with four tabs:
 
 - **General** — Enable/disable the service, select active server, toggle transparent routing, choose which interfaces to tunnel, optional Prometheus exporter
 - **Servers** — View and manage server profiles (shows protocol, address, port, security at a glance)
@@ -86,36 +86,36 @@ TUN-related fields (Tunnel Interfaces, TUN Device, TUN Address, TUN Gateway, Byp
 
 ## Prometheus metrics
 
-When the "Prometheus Exporter" toggle is enabled, a metrics endpoint is available at `http://<firewall-ip>:9101/metrics`. All metrics use the `tunbridge_` prefix.
+When the "Prometheus Exporter" toggle is enabled, a metrics endpoint is available at `http://<firewall-ip>:9101/metrics`. All metrics use the `coretun_` prefix.
 
 ### Process metrics (per xray-core and hev-socks5-tunnel)
 
 | Metric | Type | Description |
 |---|---|---|
-| `tunbridge_up{process="xray\|tunnel"}` | gauge | Whether the process is running (1=up, 0=down) |
-| `tunbridge_rss_bytes` | gauge | Resident set size in bytes |
-| `tunbridge_vsz_bytes` | gauge | Virtual memory size in bytes |
-| `tunbridge_cpu_percent` | gauge | Snapshot CPU usage percent |
-| `tunbridge_cpu_seconds_total` | counter | Cumulative CPU time in seconds |
-| `tunbridge_uptime_seconds` | gauge | Process uptime in seconds |
+| `coretun_up{process="xray\|tunnel"}` | gauge | Whether the process is running (1=up, 0=down) |
+| `coretun_rss_bytes` | gauge | Resident set size in bytes |
+| `coretun_vsz_bytes` | gauge | Virtual memory size in bytes |
+| `coretun_cpu_percent` | gauge | Snapshot CPU usage percent |
+| `coretun_cpu_seconds_total` | counter | Cumulative CPU time in seconds |
+| `coretun_uptime_seconds` | gauge | Process uptime in seconds |
 
 ### System memory
 
 | Metric | Type | Description |
 |---|---|---|
-| `tunbridge_system_memory_total_bytes` | gauge | Total physical memory |
-| `tunbridge_system_memory_free_bytes` | gauge | Free memory |
-| `tunbridge_system_memory_available_bytes` | gauge | Free + inactive (available for use) |
-| `tunbridge_system_memory_active_bytes` | gauge | Active memory |
-| `tunbridge_system_memory_inactive_bytes` | gauge | Inactive/cached pages |
-| `tunbridge_system_memory_wired_bytes` | gauge | Wired (non-pageable) memory |
+| `coretun_system_memory_total_bytes` | gauge | Total physical memory |
+| `coretun_system_memory_free_bytes` | gauge | Free memory |
+| `coretun_system_memory_available_bytes` | gauge | Free + inactive (available for use) |
+| `coretun_system_memory_active_bytes` | gauge | Active memory |
+| `coretun_system_memory_inactive_bytes` | gauge | Inactive/cached pages |
+| `coretun_system_memory_wired_bytes` | gauge | Wired (non-pageable) memory |
 
 ### Tunnel traffic
 
 | Metric | Type | Description |
 |---|---|---|
-| `tunbridge_tunnel_bytes_total{direction="rx\|tx"}` | counter | Bytes through TUN interface |
-| `tunbridge_tunnel_packets_total{direction="rx\|tx"}` | counter | Packets through TUN interface |
+| `coretun_tunnel_bytes_total{direction="rx\|tx"}` | counter | Bytes through TUN interface |
+| `coretun_tunnel_packets_total{direction="rx\|tx"}` | counter | Packets through TUN interface |
 
 ## Server compatibility
 
@@ -123,7 +123,7 @@ The OPNsense `xray-core` package tracks FreeBSD ports, which can lag behind upst
 
 ## Performance tuning
 
-The plugin ships TCP tuning via `/usr/local/etc/sysctl.d/xproxy.conf`:
+The plugin ships TCP tuning via `/usr/local/etc/sysctl.d/coretun.conf`:
 
 - Large socket buffers (`maxsockbuf=16M`, send/recv max `8M`) sized for ~500 Mbps at 50ms RTT
 - Initial congestion window of 44 segments for faster ramp-up on new connections
